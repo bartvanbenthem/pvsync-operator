@@ -7,7 +7,7 @@ use object_store::{ObjectStore, PutPayload};
 use std::env;
 use std::sync::Arc;
 
-// --- 1. Object Store Builder ---
+// --- Object Store Builder ---
 
 /// Initializes and returns an Arc to the Azure Blob ObjectStore.
 ///
@@ -74,7 +74,7 @@ pub fn initialize_s3_store(
     Ok(Arc::new(store))
 }
 
-// --- 2. Write Function ---
+// --- Write Function ---
 
 /// Writes a slice of bytes to a specified path in the object store.
 pub async fn write_data(store: Arc<dyn ObjectStore>, path: &str, data: &[u8]) -> Result<()> {
@@ -90,7 +90,7 @@ pub async fn write_data(store: Arc<dyn ObjectStore>, path: &str, data: &[u8]) ->
         container_name, object_key
     );
 
-    // 4. Perform the atomic write operation.
+    // Perform the atomic write operation.
     let result = store
         .put(&object_key, payload)
         .await
@@ -99,7 +99,7 @@ pub async fn write_data(store: Arc<dyn ObjectStore>, path: &str, data: &[u8]) ->
     println!("File written successfully!");
     println!("Returned E-Tag: {:?}", result.e_tag);
 
-    // 5. Verification (HEAD request).
+    // Verification (HEAD request).
     let metadata = store
         .head(&object_key)
         .await
@@ -107,7 +107,7 @@ pub async fn write_data(store: Arc<dyn ObjectStore>, path: &str, data: &[u8]) ->
     println!("--- Verification ---");
     println!("Retrieved object size: {} bytes", metadata.size);
 
-    // 6. Cleanup.
+    // Cleanup.
     //store.delete(&object_key).await
     //    .map_err(|e| anyhow!("Failed to delete object: {}", e))?;
     //println!("Object deleted successfully for cleanup.");
