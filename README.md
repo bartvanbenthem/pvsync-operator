@@ -1,9 +1,26 @@
-# pvsync
-Kubernetes controller that logs the state of storage resources on a Kubernetes cluster. 
+# PersistentVolume Sync Operator
+The PersistentVolume Sync Operator provides automated, cluster-wide replication of Kubernetes PersistentVolumes (PV) that share a common backend (e.g., NFS, RWX file storage).
+It enables disaster-recovery scenarios by exporting PV metadata from a Protected cluster and restoring identical PV definitions into a Recovery cluster.
+
+## Features
+- 🔄 Cluster-wide PV discovery (no namespace restrictions)
+- ☁️ Backend-agnostic object storage support (Azure Blob, S3, MinIO, Cloudian)
+- 📤 Export PV definitions from the Protected cluster to object storage
+- 📥 Recreate PV objects on the Recovery cluster pointing to the same shared storage
+- 🏷 Cluster identity detection via configurable annotation key
+- 🧹 Automatic retention-based cleanup of historical exports
+- 📡 Event-driven + periodic sync using Kubernetes watches and optional scheduling
+
+## Use Cases
+- 🌐 Multi-cluster DR for shared RWX storage
+- 💾 PV metadata backup and restore
+- 🔁 Migration of PVs between clusters
+- 🧭 Stateless failover for NFS-backed workloads
 
 ### upcoming release
 Features in currently in development for the upcoming release:
 * remove old logs based on a given retention time in days in the cr spec
+* auto rebuild pv on Recovery cluster
 
 ## Build container
 ```bash
