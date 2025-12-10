@@ -1,16 +1,30 @@
 use kube::{
     api::{Api, Patch, PatchParams, ResourceExt},
-    Client, Error,
+    core::{NamespaceResourceScope, object::HasStatus},
+    Client, Error, Resource,
+    // Note: We remove ClusterResourceScope import as it is unused and causes a warning
 };
-use k8s_openapi::Resource;
-use serde::{de::DeserializeOwned, Serialize};
-use serde_json::{json, Value};
+
+use k8s_openapi::{
+    Metadata,
+    apimachinery::pkg::apis::meta::v1::ObjectMeta,
+};
+use serde::{
+    de::DeserializeOwned, 
+    Serialize,
+};
+use serde_json::{
+    json, Value,
+};
 use std::fmt::Debug;
 
 /// Create an API object for either cluster-scoped or namespaced CRDs.
 fn crd_scope<T>(client: Client, namespace: Option<&str>) -> Api<T>
 where
-    T: Resource,
+    // THIS IS THE SOURCE OF TRUTH: T must be a NAMESPACED Resource with Default DynamicType
+    T: Resource<Scope = NamespaceResourceScope> + DeserializeOwned, 
+    T::DynamicType: Default, 
+    T: Metadata<Ty = ObjectMeta>,
 {
     match namespace {
         Some(ns) => Api::namespaced(client, ns),
@@ -26,8 +40,17 @@ pub async fn patch_status_generic<T>(
     status: &T::Status,
 ) -> Result<T, Error>
 where
-    T: Resource + Clone + DeserializeOwned + Debug + Serialize,
-    T::DynamicType: Default,
+    // ENFORCE THE crd_scope BOUNDS:
+// 1. RESOURCE/CRD BOUNDS: Must inherit the exact bounds from crd_scope (which includes Metadata implicitly):
+    T: Resource<Scope = NamespaceResourceScope> + DeserializeOwned,
+
+    // 2. REQUIRED FOR STATUS & ASYNC:
+    T: HasStatus,              // For T::Status
+    T: Clone + Debug + Serialize, // Required for Clone/Debug/Serialize/Api interactions
+    T: Send + Sync + 'static,    // For async/Tokio runtime
+
+    // 3. ASSOCIATED TYPE BOUNDS:
+    T::DynamicType: Default,     // For Api::all/namespaced
     T::Status: Serialize + Clone + Debug,
 {
     let api = crd_scope::<T>(client, namespace);
@@ -45,7 +68,14 @@ pub async fn print_status_generic<T>(
     namespace: Option<&str>,
 ) -> Result<(), Error>
 where
-    T: Resource + Clone + DeserializeOwned + Debug + Serialize,
+    // ENFORCE THE crd_scope BOUNDS:
+    T: Resource<Scope = NamespaceResourceScope> + DeserializeOwned,
+    T: Metadata<Ty = ObjectMeta>,
+
+    // OTHER NECESSARY BOUNDS:
+    T: Clone + Debug + Serialize,
+    T: HasStatus,
+    T: Send + Sync + 'static, 
     T::DynamicType: Default,
     T::Status: Default + Clone + Serialize + DeserializeOwned + Debug,
 {
@@ -53,7 +83,8 @@ where
 
     let obj = api.get_status(name).await?;
 
-    let status = obj.status.clone().unwrap_or_default();
+    // FIX FOR E0615: Call the method with parentheses
+    let status = obj.status().cloned().unwrap_or_default(); 
 
     println!(
         "Got status {:?} for CRD {}",

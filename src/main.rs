@@ -1,4 +1,5 @@
 use pvsync::crd::PersistentVolumeSync;
+use pvsync::crd::PersistentVolumeSyncStatus;
 use pvsync::crd::SyncMode;
 use pvsync::status;
 use pvsync::storage;
@@ -153,7 +154,9 @@ async fn reconcile_protected(
     // TODO()
 
     //update status
-    status::patch(client.clone(), &name, true).await?;
+    let status = PersistentVolumeSyncStatus { succeeded: true };
+    status::patch(client.clone(), &name, status).await?;
+    // print status
     status::print(client.clone(), &name).await?;
 
     Ok(Action::requeue(Duration::from_secs(32000)))
@@ -173,7 +176,8 @@ fn on_error(cr: Arc<PersistentVolumeSync>, error: &Error, context: Arc<ContextDa
 
     // Spawn async patch inside sync function
     tokio::spawn(async move {
-        if let Err(e) = status::patch(client, &name, false).await {
+        let status = PersistentVolumeSyncStatus { succeeded: false };
+        if let Err(e) = status::patch(client, &name, status).await {
             error!("Failed to update status: {:?}", e);
         }
     });

@@ -9,12 +9,12 @@ use crate::crd::{PersistentVolumeSync, PersistentVolumeSyncStatus};
 pub async fn patch(
     client: Client,
     name: &str,
-    success: bool,
+    status: PersistentVolumeSyncStatus,
 ) -> Result<PersistentVolumeSync, Error> {
     let api: Api<PersistentVolumeSync> = Api::all(client);
 
     let data: Value = json!({
-        "status": PersistentVolumeSyncStatus { succeeded: success },
+        "status": status,
     });
 
     api.patch_status(name, &PatchParams::default(), &Patch::Merge(&data))
