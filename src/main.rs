@@ -1,23 +1,24 @@
 use pvsync::crd::PersistentVolumeSync;
+use pvsync::crd::SyncMode;
 use pvsync::status;
 use pvsync::storage;
 use pvsync::storage::StorageBundle;
-use pvsync::utils::*;
+use pvsync::utils;
 
+use anyhow::anyhow;
+use std::env;
 use chrono::Utc;
 use futures::stream::StreamExt;
 use k8s_openapi::api::core::v1::PersistentVolume;
-use pvsync::utils;
 use kube::Config as KubeConfig;
 use kube::ResourceExt;
+use kube::api::ListParams;
 use kube::runtime::watcher::Config;
 use kube::{Api, client::Client, runtime::Controller, runtime::controller::Action};
 use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::*;
 
-use anyhow::anyhow;
-use std::env;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -48,41 +49,55 @@ async fn main() -> Result<(), Error> {
         .map_err(|e| kube::Error::InferConfig(e))?;
     let client: Client = Client::try_from(config)?;
 
-    // Preparation of resources used by the `kube_runtime::Controller`
-    let crd_api: Api<PersistentVolumeSync> = Api::all(client.clone());
     let context: Arc<ContextData> = Arc::new(ContextData::new(client.clone()));
 
-    let (tx, rx) = mpsc::channel::<()>(16); // channel to trigger global reconciles
-    let signal_stream = ReceiverStream::new(rx); // converts mpsc into a stream
-    // Start the Persistant Volume watcher in background
-    start_resource_watcher::<PersistentVolume>(client.clone(), tx).await?;
+    // Preparation of resources used by the `kube_runtime::Controller`
+    let crd_api: Api<PersistentVolumeSync> = Api::all(client.clone());
+    let cr_list = crd_api.list(&ListParams::default()).await?;
 
-    // The controller comes from the `kube_runtime` crate and manages the reconciliation process.
-    // It requires the following information:
-    // - `kube::Api<T>` this controller "owns". In this case, `T = PersistentVolumeSync`, as this controller owns the `PersistentVolumeSync` resource,
-    // - `kube::runtime::watcher::Config` can be adjusted for precise filtering of `PersistentVolumeSync` resources before the actual reconciliation, e.g. by label,
-    // - `reconcile` function with reconciliation logic to be called each time a resource of `PersistentVolumeSync` kind is created/updated/deleted,
-    // - `on_error` function to call whenever reconciliation fails.
-    Controller::new(crd_api.clone(), Config::default())
-        .shutdown_on_signal()
-        .reconcile_all_on(signal_stream)
-        .run(reconcile, on_error, context)
-        .for_each(|reconciliation_result| async move {
-            match reconciliation_result {
-                Ok(custom_resource) => {
-                    info!("Reconciliation successful. Resource: {:?}", custom_resource);
+    let mut mode = SyncMode::default();
+    for cr in cr_list {
+        mode = cr.spec.mode;
+    }
+
+    if mode == SyncMode::Protected {
+        let (tx, rx) = mpsc::channel::<()>(16); // channel to trigger global reconciles
+        let signal_stream = ReceiverStream::new(rx); // converts mpsc into a stream
+        // Start the Persistant Volume watcher in background
+        utils::start_resource_watcher::<PersistentVolume>(client.clone(), tx).await?;
+
+        // The controller comes from the `kube_runtime` crate and manages the reconciliation process.
+        // It requires the following information:
+        // - `kube::Api<T>` this controller "owns". In this case, `T = PersistentVolumeSync`, as this controller owns the `PersistentVolumeSync` resource,
+        // - `kube::runtime::watcher::Config` can be adjusted for precise filtering of `PersistentVolumeSync` resources before the actual reconciliation, e.g. by label,
+        // - `reconcile` function with reconciliation logic to be called each time a resource of `PersistentVolumeSync` kind is created/updated/deleted,
+        // - `on_error` function to call whenever reconciliation fails.
+        Controller::new(crd_api.clone(), Config::default())
+            .shutdown_on_signal()
+            .reconcile_all_on(signal_stream)
+            .run(reconcile_protected, on_error, context)
+            .for_each(|reconciliation_result| async move {
+                match reconciliation_result {
+                    Ok(custom_resource) => {
+                        info!("Reconciliation successful. Resource: {:?}", custom_resource);
+                    }
+                    Err(reconciliation_err) => {
+                        warn!("Reconciliation error: {:?}", reconciliation_err)
+                    }
                 }
-                Err(reconciliation_err) => {
-                    warn!("Reconciliation error: {:?}", reconciliation_err)
-                }
-            }
-        })
-        .await;
+            })
+            .await;
+    } else if mode == SyncMode::Recovery {
+        println!("Recovery");
+    }
 
     Ok(())
 }
 
-async fn reconcile(cr: Arc<PersistentVolumeSync>, context: Arc<ContextData>) -> Result<Action, Error> {
+async fn reconcile_protected(
+    cr: Arc<PersistentVolumeSync>,
+    context: Arc<ContextData>,
+) -> Result<Action, Error> {
     let client: Client = context.client.clone(); // The `Client` is shared -> a clone from the reference is obtained
 
     let name = cr.name_any(); // Name of the PersistentVolumeSync resource is used to name the subresources as well.
@@ -103,7 +118,7 @@ async fn reconcile(cr: Arc<PersistentVolumeSync>, context: Arc<ContextData>) -> 
 
     // cleanup old log folders based on the given retention in days in the CR spec.
     // TODO()
-    
+
     //update status
     status::patch(client.clone(), &name, true).await?;
     status::print(client.clone(), &name).await?;
