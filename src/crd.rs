@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
     version = "v1alpha1",
     kind = "PersistentVolumeSync",
     plural = "persistentvolumesyncs",
-    namespaced
 )]
 #[kube(status = "PersistentVolumeSyncStatus")]
 pub struct PersistentVolumeSyncSpec {
