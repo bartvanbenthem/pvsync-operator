@@ -64,6 +64,8 @@ kubectl -n pvsync-operator create secret generic pvsync \
 
 ## Sample volume sync resource
 ```bash
+# use label: volumesyncs.storage.cndev.nl/sync: "enabled"
+# to enable a sync on a persistant volume
 kubectl apply -f ./config/samples/pvsync-example.yaml
 kubectl describe persistentvolumesyncs.storage.cndev.nl example-pvsync
 # kubectl delete -f ./config/samples/pvsync-example.yaml
@@ -71,6 +73,7 @@ kubectl describe persistentvolumesyncs.storage.cndev.nl example-pvsync
 
 ## Test Watchers & Reconciler on Create Persistant Volumes
 ```bash
+kubectl apply -f ./config/samples/test-pv-nolabel.yaml
 kubectl apply -f ./config/samples/test-pv.yaml
 kubectl delete -f ./config/samples/test-pv.yaml
 ```

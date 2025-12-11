@@ -1,3 +1,4 @@
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use pvsync::crd::PersistentVolumeSync;
 use pvsync::crd::PersistentVolumeSyncStatus;
 use pvsync::crd::SyncMode;
@@ -67,7 +68,8 @@ async fn main() -> Result<(), Error> {
         // converts mpsc into a stream
         let signal_stream = ReceiverStream::new(rx);
         // Start the Persistant Volume watcher in background
-        utils::start_resource_watcher::<PersistentVolume>(client.clone(), tx).await?;
+        let label = "volumesyncs.storage.cndev.nl/sync=enabled";
+        utils::start_resource_watcher_label::<PersistentVolume>(client.clone(), tx,label).await?;
         // The controller comes from the `kube_runtime` crate and manages the reconciliation process.
         // It requires the following information:
         // - `kube::Api<T>` this controller "owns". In this case, `T = PersistentVolumeSync`, as this controller owns the `PersistentVolumeSync` resource,
@@ -224,24 +226,24 @@ async fn object_storage_logic(
     timestamp: i64,
     storage_objects: StorageObjectBundle,
 ) -> anyhow::Result<()> {
-    // 1. Load the environment file once at startup.
+    // Load the environment file once at startup (dev only).
     dotenvy::dotenv().ok();
 
     // --- Core Logic: Select Provider and Initialize Store ---
 
-    // 2. Determine the cloud provider from the custom resource spec.
+    // Determine the cloud provider from the custom resource spec.
     let provider = &cr.spec.cloud_provider.to_lowercase();
-    // // 2. Determine the protected cluster name from the custom resource spec.
+    // Determine the protected cluster name from the custom resource spec.
     let cluster = &cr.spec.protected_cluster.to_lowercase();
-    // 3. Define common application parameters.
+    // Define common application parameters.
     let target_path = format!("{}/{}_test_file.json", &cluster, &timestamp);
 
     // test data
-    let test_data = serde_json::to_string_pretty(&storage_objects)?;
+    let data = serde_json::to_string_pretty(&storage_objects)?;
 
     println!("Selected Provider: {}", provider);
 
-    // 4. Initialize the Object Store dynamically.
+    // Initialize the Object Store dynamically.
     let store = match provider.as_str() {
         "azure" => {
             let container_name = env::var("OBJECT_STORAGE_BUCKET")
@@ -271,7 +273,7 @@ async fn object_storage_logic(
 
     // 5. Perform the write and verification using the reusable library function.
     // This call works seamlessly with either the Azure or S3 store.
-    storage::write_data(store, &target_path, &test_data.as_bytes()).await?;
+    storage::write_data(store, &target_path, &data.as_bytes()).await?;
 
     println!(
         "Application completed successfully. Object written to path: {}",
