@@ -53,6 +53,15 @@ helm install pvsync ./config/operator/chart --create-namespace --namespace pvsyn
 # helm -n pvsync-operator uninstall pvsync
 ```
 
+## create secret
+```bash
+kubectl -n pvsync-operator create secret generic pvsync \
+  --from-literal=OBJECT_STORAGE_ACCOUNT="your-account" \
+  --from-literal=OBJECT_STORAGE_SECRET="your-secret" \
+  --from-literal=OBJECT_STORAGE_BUCKET="your-bucket" \
+  --from-literal=S3_ENDPOINT_URL=""
+```
+
 ## Sample volume sync resource
 ```bash
 kubectl apply -f ./config/samples/pvsync-example.yaml

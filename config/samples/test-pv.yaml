@@ -7,7 +7,7 @@ spec:
     storage: 1Gi
   accessModes:
     - ReadWriteMany
-  persistentVolumeReclaimPolicy: Delete
+  persistentVolumeReclaimPolicy: Retain
   storageClassName: manual-nfs
   nfs:
     path: /export/test
@@ -22,7 +22,7 @@ spec:
     storage: 1Gi
   accessModes:
     - ReadWriteMany
-  persistentVolumeReclaimPolicy: Delete
+  persistentVolumeReclaimPolicy: Retain
   storageClassName: manual-nfs
   nfs:
     path: /export/test
@@ -37,7 +37,7 @@ spec:
     storage: 1Gi
   accessModes:
     - ReadWriteMany
-  persistentVolumeReclaimPolicy: Delete
+  persistentVolumeReclaimPolicy: Retain
   storageClassName: manual-nfs
   nfs:
     path: /export/test
@@ -52,7 +52,7 @@ spec:
     storage: 1Gi
   accessModes:
     - ReadWriteMany
-  persistentVolumeReclaimPolicy: Delete
+  persistentVolumeReclaimPolicy: Retain
   storageClassName: manual-nfs
   nfs:
     path: /export/test

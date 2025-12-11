@@ -6,7 +6,6 @@ use pvsync::storage;
 use pvsync::storage::StorageObjectBundle;
 use pvsync::utils;
 
-use anyhow::anyhow;
 use chrono::Utc;
 use futures::stream::StreamExt;
 use k8s_openapi::api::core::v1::PersistentVolume;
@@ -141,13 +140,11 @@ async fn reconcile_protected(
     //let tf = now.format("%Y-%m-%d-%H%M%S");
     let tf = now.timestamp();
 
-    let protected = &pvsync.spec.protected_cluster;
-
     // populate bundle
     let storage_bundle = storage::populate_storage_bundle(client.clone()).await?;
 
     // upload to object storage
-    object_storage_logic(tf, &protected, storage_bundle).await?;
+    object_storage_logic(pvsync, tf, storage_bundle).await?;
 
     // cleanup old log folders based on the given retention in days in the CR spec.
     // TODO()
@@ -223,8 +220,8 @@ pub enum Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 async fn object_storage_logic(
+    cr: &PersistentVolumeSync,
     timestamp: i64,
-    cluster_name: &str,
     storage_objects: StorageObjectBundle,
 ) -> anyhow::Result<()> {
     // 1. Load the environment file once at startup.
@@ -232,13 +229,12 @@ async fn object_storage_logic(
 
     // --- Core Logic: Select Provider and Initialize Store ---
 
-    // 2. Determine the cloud provider from environment variable.
-    let provider = env::var("CLOUD_PROVIDER")
-        .map_err(|_| anyhow!("CLOUD_PROVIDER must be set (e.g., 'azure' or 's3')"))?
-        .to_lowercase();
-
+    // 2. Determine the cloud provider from the custom resource spec.
+    let provider = &cr.spec.cloud_provider.to_lowercase();
+    // // 2. Determine the protected cluster name from the custom resource spec.
+    let cluster = &cr.spec.protected_cluster.to_lowercase();
     // 3. Define common application parameters.
-    let target_path = format!("{}/{}_test_file.json", cluster_name, timestamp);
+    let target_path = format!("{}/{}_test_file.json", &cluster, &timestamp);
 
     // test data
     let test_data = serde_json::to_string_pretty(&storage_objects)?;
