@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 #[kube(status = "PersistentVolumeSyncStatus")]
 pub struct PersistentVolumeSyncSpec {
     #[garde(skip)]
-    #[serde(rename = "clusterNameKey")]
-    pub cluster_name_key: String,
+    #[serde(rename = "protectedCluster")]
+    pub protected_cluster: String,
     #[garde(skip)]
     #[serde(rename = "cloudProvider")]
     pub cloud_provider: String,

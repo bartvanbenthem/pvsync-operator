@@ -3,7 +3,7 @@ use pvsync::crd::PersistentVolumeSyncStatus;
 use pvsync::crd::SyncMode;
 use pvsync::status;
 use pvsync::storage;
-use pvsync::storage::StorageBundle;
+use pvsync::storage::StorageObjectBundle;
 use pvsync::utils;
 
 use anyhow::anyhow;
@@ -141,14 +141,13 @@ async fn reconcile_protected(
     //let tf = now.format("%Y-%m-%d-%H%M%S");
     let tf = now.timestamp();
 
-    let cluster_name =
-        utils::get_most_common_cluster_name(client.clone(), &pvsync.spec.cluster_name_key).await?;
+    let protected = &pvsync.spec.protected_cluster;
 
     // populate bundle
     let storage_bundle = storage::populate_storage_bundle(client.clone()).await?;
 
     // upload to object storage
-    object_storage_logic(tf, &cluster_name, storage_bundle).await?;
+    object_storage_logic(tf, &protected, storage_bundle).await?;
 
     // cleanup old log folders based on the given retention in days in the CR spec.
     // TODO()
@@ -226,7 +225,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 async fn object_storage_logic(
     timestamp: i64,
     cluster_name: &str,
-    storage_bundle: StorageBundle,
+    storage_objects: StorageObjectBundle,
 ) -> anyhow::Result<()> {
     // 1. Load the environment file once at startup.
     dotenvy::dotenv().ok();
@@ -242,7 +241,7 @@ async fn object_storage_logic(
     let target_path = format!("{}/{}_test_file.json", cluster_name, timestamp);
 
     // test data
-    let test_data = serde_json::to_string_pretty(&storage_bundle)?;
+    let test_data = serde_json::to_string_pretty(&storage_objects)?;
 
     println!("Selected Provider: {}", provider);
 

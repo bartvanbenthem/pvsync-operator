@@ -76,9 +76,10 @@ metadata:
     app.kubernetes.io/name: persistentvolumesync
     app.kubernetes.io/part-of: volumesync-operator
   annotations:
-    description: "Tracks persistent volume usage and logs it"
+    description: "Tracks persistent volumes on protected cluster"
 spec:
-  clusterNameKey: cluster.x-k8s.io/cluster-name # retreiving the cluster name by annotation key is required
-  cloudProvider: azure # or s3
+  protectedCluster: mylocalcluster # name or id of the protected cluster
+  mode: Protected # Protected | Recovery
+  cloudProvider: azure # azure | s3
   retention: 14 # retention in days
 ```

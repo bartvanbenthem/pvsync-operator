@@ -1,14 +1,12 @@
 use anyhow::{Result, anyhow};
 use k8s_openapi::Metadata;
 use k8s_openapi::NamespaceResourceScope;
-use k8s_openapi::api::core::v1::Node;
 use kube::Resource;
 use kube::{Api, Client, api::ListParams};
 use kube_runtime::reflector::ObjectRef;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json;
-use std::collections::HashMap;
 use std::fs::{File, create_dir_all};
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -190,30 +188,4 @@ fn create_file_with_dirs(file_name: &str) -> std::io::Result<File> {
     }
 
     File::create(file_name)
-}
-
-/// Get the most common cluter name based on a given annotation key among all nodes
-pub async fn get_most_common_cluster_name(
-    client: Client,
-    annotation_key: &str,
-) -> Result<String, anyhow::Error> {
-    let nodes: Api<Node> = Api::all(client);
-    let node_list = nodes.list(&ListParams::default()).await?;
-
-    let mut freq_cn: HashMap<String, usize> = HashMap::new();
-
-    for node in node_list.items {
-        if let Some(annotations) = &node.metadata.annotations {
-            if let Some(cluster_name) = annotations.get(annotation_key) {
-                *freq_cn.entry(cluster_name.clone()).or_insert(0) += 1;
-            }
-        }
-    }
-
-    let (most_common, _) = freq_cn
-        .into_iter()
-        .max_by_key(|(_, count)| *count)
-        .ok_or_else(|| anyhow!("No cluster names found in node annotations"))?;
-
-    Ok(most_common)
 }

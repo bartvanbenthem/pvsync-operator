@@ -21,13 +21,13 @@ use std::env;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct StorageBundle {
+pub struct StorageObjectBundle {
     pub storage_classes: Vec<StorageClass>,
     pub persistent_volumes: Vec<PersistentVolume>,
     pub persistent_volume_claims: Vec<PersistentVolumeClaim>,
 }
 
-impl StorageBundle {
+impl StorageObjectBundle {
     pub fn new() -> Self {
         Self {
             storage_classes: Vec::new(),
@@ -49,14 +49,14 @@ impl StorageBundle {
     }
 }
 
-pub async fn populate_storage_bundle(client: Client) -> Result<StorageBundle, anyhow::Error> {
+pub async fn populate_storage_bundle(client: Client) -> Result<StorageObjectBundle, anyhow::Error> {
     let storage_classes_list = resource::get_resource_list::<StorageClass>(client.clone()).await?;
     let persistent_volumes_list =
         resource::get_resource_list::<PersistentVolume>(client.clone()).await?;
     let persistent_volume_claims_list =
         resource::get_resource_list::<PersistentVolumeClaim>(client.clone()).await?;
 
-    let bundle = StorageBundle {
+    let bundle = StorageObjectBundle {
         // ObjectList<T> has a 'items' field which is Vec<T>
         storage_classes: storage_classes_list.items,
         persistent_volumes: persistent_volumes_list.items,
@@ -66,8 +66,8 @@ pub async fn populate_storage_bundle(client: Client) -> Result<StorageBundle, an
     Ok(bundle)
 }
 
-pub fn dummy_storage_bundle() -> StorageBundle {
-    let mut bundle = StorageBundle::new();
+pub fn dummy_storage_bundle() -> StorageObjectBundle {
+    let mut bundle = StorageObjectBundle::new();
 
     // -------- StorageClass --------
     let sc = StorageClass {
