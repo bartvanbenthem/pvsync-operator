@@ -11,7 +11,6 @@ use tokio::fs;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReadDirStream;
 
-
 // Generic function to fetch and write a resource in json format to disk
 pub async fn cleanup_resource_logs(
     mount_path: &str,

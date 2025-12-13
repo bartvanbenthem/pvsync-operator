@@ -20,11 +20,11 @@ use object_store::azure::MicrosoftAzureBuilder;
 use object_store::path::Path;
 use object_store::{ObjectStore, PutPayload};
 // Re-aliasing for the Kubernetes ObjectMeta conflict (if still needed)
+use chrono::{Duration, Utc};
+use futures::TryStreamExt;
 use object_store::ObjectMeta as StoreObjectMeta;
 use std::env;
 use std::sync::Arc;
-use chrono::{Duration, Utc};
-use futures::TryStreamExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageObjectBundle {
@@ -267,9 +267,7 @@ pub async fn write_data(store: Arc<dyn ObjectStore>, path: &str, data: &[u8]) ->
 /// # Arguments
 /// * `cr` - Reference to the PersistentVolumeSync Custom Resource for configuration.
 /// * `retention_days` - The number of days to retain logs (logs older than this are deleted).
-pub async fn cleanup_old_objects(
-    cr: &PersistentVolumeSync,
-) -> anyhow::Result<()> {
+pub async fn cleanup_old_objects(cr: &PersistentVolumeSync) -> anyhow::Result<()> {
     // 1. Environment Setup (Dev only)
     dotenvy::dotenv().ok();
 
@@ -291,30 +289,27 @@ pub async fn cleanup_old_objects(
     );
 
     // 4. Object Store Initialization
-    let store: Arc<dyn ObjectStore> = initialize_object_store(provider.as_str()).await?.into(); 
-    
+    let store: Arc<dyn ObjectStore> = initialize_object_store(provider.as_str()).await?.into();
+
     // Define Object Prefix
     let prefix = Path::from(format!("{}/", &cluster));
 
     // List, Filter, and Delete Objects
-    
+
     // FIX E0277: ObjectStore::list returns the Stream directly
-    let objects_stream = store.list(Some(&prefix)); 
-    
+    let objects_stream = store.list(Some(&prefix));
+
     let objects_to_delete: Vec<Path> = objects_stream
-        .try_filter_map(|meta: StoreObjectMeta| async move { 
-            
+        .try_filter_map(|meta: StoreObjectMeta| async move {
             // FIX E0599: Use the correct method name `filename()`
             if let Some(filename) = meta.location.filename() {
-                
                 // filename is likely a &str here, so split() should work
                 if let Some(timestamp_str) = filename.split('_').next() {
-                    
                     if let Ok(file_timestamp) = timestamp_str.parse::<i64>() {
                         // FIX E0425: Variable is now in scope here:
                         if file_timestamp < cutoff_timestamp_sec {
                             // Object is older than retention, mark for deletion
-                            return Ok(Some(meta.location)); 
+                            return Ok(Some(meta.location));
                         }
                     }
                 }
@@ -325,11 +320,17 @@ pub async fn cleanup_old_objects(
         .await?;
 
     if objects_to_delete.is_empty() {
-        info!("No log files found older than {} days for cluster {}.", retention_days, &cluster);
+        info!(
+            "No log files found older than {} days for cluster {}.",
+            retention_days, &cluster
+        );
         return Ok(());
     }
 
-    info!("Found {} old log files to delete. Initiating sequential deletion.", objects_to_delete.len());
+    info!(
+        "Found {} old log files to delete. Initiating sequential deletion.",
+        objects_to_delete.len()
+    );
 
     for path in objects_to_delete.iter() {
         // Delete is async, so we await each one.
@@ -337,7 +338,7 @@ pub async fn cleanup_old_objects(
     }
 
     info!(
-        "Successfully deleted {} log files older than {} days for cluster {}.", 
+        "Successfully deleted {} log files older than {} days for cluster {}.",
         objects_to_delete.len(),
         retention_days,
         &cluster
