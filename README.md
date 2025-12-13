@@ -21,6 +21,7 @@ It enables disaster-recovery scenarios by exporting PV metadata from a Protected
 Features in currently in development for the upcoming release:
 * remove old logs based on a given retention time in days in the cr spec
 * auto rebuild pv on Recovery cluster
+* test
 
 ## Build container
 ```bash
