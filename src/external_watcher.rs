@@ -8,7 +8,7 @@ use serde::Deserialize;
 // --- Configuration ---
 
 const EXTERNAL_ENDPOINT: &str = "https://your-object-store-api/list-objects";
-const POLLING_INTERVAL: Duration = Duration::from_secs(5);
+const POLLING_INTERVAL: Duration = Duration::from_secs(30);
 
 // Define a simple structure for the listing, though it will only be used
 // if the ETag changes.
