@@ -1,0 +1,14 @@
+apiVersion: storage.cndev.nl/v1alpha1
+kind: PersistentVolumeSync
+metadata:
+  name: example-recovery-cluster
+  labels:
+    volumesyncs.storage.cndev.nl/name: example-recovery-cluster
+    volumesyncs.storage.cndev.nl/part-of: pvsync-operator
+  annotations:
+    description: "Disaster Recovery solution for Persistent Volumes"
+spec:
+  protectedCluster: mylocalcluster # name or id of the recovery cluster
+  mode: Recovery # Protected | Recovery
+  cloudProvider: azure # azure | s3
+  retention: 15 # retention in days

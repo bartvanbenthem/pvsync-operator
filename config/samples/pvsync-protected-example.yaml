@@ -1,10 +1,10 @@
 apiVersion: storage.cndev.nl/v1alpha1
 kind: PersistentVolumeSync
 metadata:
-  name: example-pvsync
+  name: example-protected-cluster
   labels:
-    volumesyncs.storage.cndev.nl/name: example-pvsync
-    volumesyncs.storage.cndev.nl/part-of: volumesync-operator
+    volumesyncs.storage.cndev.nl/name: example-protected-cluster
+    volumesyncs.storage.cndev.nl/part-of: pvsync-operator
   annotations:
     description: "Disaster Recovery solution for Persistent Volumes"
 spec:

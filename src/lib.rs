@@ -4,3 +4,4 @@ pub mod resource;
 pub mod status;
 pub mod storage;
 pub mod utils;
+pub mod extwatcher;
