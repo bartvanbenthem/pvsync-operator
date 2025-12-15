@@ -10,18 +10,19 @@ use pvsync::utils;
 use chrono::Utc;
 use futures::stream::StreamExt;
 use k8s_openapi::api::core::v1::PersistentVolume;
-use kube::api::ListParams;
 use kube::Config as KubeConfig;
 use kube::ResourceExt;
+use kube::api::ListParams;
 use kube::runtime::watcher::Config;
 use kube::{Api, client::Client, runtime::Controller, runtime::controller::Action};
 use std::sync::Arc;
+use tokio::sync::watch;
 use tokio::time::Duration;
 use tracing::*;
 
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio::time::sleep;
+use tokio_stream::wrappers::ReceiverStream;
 
 /// Context injected with each `reconcile` and `on_error` method invocation.
 struct ContextData {
@@ -55,7 +56,6 @@ async fn main() -> Result<(), Error> {
     // Environment Setup trough .env file
     dotenvy::dotenv().ok();
 
-    // BLOCKING CONFIGURATION CHECK
     // This call will pause until the configuration is available or a fatal error occurs.
     // This call will pause the execution of main until the CR is available.
     let cr_to_watch = wait_for_initial_cr(client.clone()).await?;
@@ -66,6 +66,9 @@ async fn main() -> Result<(), Error> {
     let mode = cr_to_watch.spec.mode.clone();
 
     if mode == SyncMode::Protected {
+        // Shutdown signal channel
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        start_cr_cleanup_watcher(client.clone(), shutdown_tx.clone()).await;
         // channel to trigger global reconciles
         let (tx, rx) = mpsc::channel::<()>(16);
         // converts mpsc into a stream
@@ -82,6 +85,9 @@ async fn main() -> Result<(), Error> {
             .shutdown_on_signal()
             .reconcile_all_on(signal_stream)
             .run(reconcile_protected, on_error, context)
+            .take_until(async move {
+                shutdown_rx.changed().await.ok();
+            })
             .for_each(|reconciliation_result| async move {
                 match reconciliation_result {
                     Ok(custom_resource) => {
@@ -94,6 +100,10 @@ async fn main() -> Result<(), Error> {
             })
             .await;
     } else if mode == SyncMode::Recovery {
+        // Shutdown signal channel
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        start_cr_cleanup_watcher(client.clone(), shutdown_tx.clone()).await;
+
         // get the single CR
         let cr = cr_to_watch.clone();
         let polling_interval: Duration;
@@ -118,6 +128,9 @@ async fn main() -> Result<(), Error> {
             .shutdown_on_signal()
             .reconcile_all_on(signal_stream)
             .run(reconcile_recovery, on_error, context)
+            .take_until(async move {
+                shutdown_rx.changed().await.ok();
+            })
             .for_each(|reconciliation_result| async move {
                 match reconciliation_result {
                     Ok(custom_resource) => {
@@ -189,7 +202,7 @@ async fn wait_for_initial_cr(client: Client) -> Result<PersistentVolumeSync, Err
     // Log waiting message
     info!("Waiting for the single required PersistentVolumeSync resource to be applied...");
     // We can use default ListParams as we are not applying labels/fields filtering
-    let lp = ListParams::default(); 
+    let lp = ListParams::default();
     // Start polling loop
     loop {
         match api.list(&lp).await {
@@ -206,24 +219,35 @@ async fn wait_for_initial_cr(client: Client) -> Result<PersistentVolumeSync, Err
                         // ** Perform Validation Here **
                         // If validation fails, log error and continue (or return a specific error)
 
-                        info!("PersistentVolumeSync resource found: '{}'. Starting controller.", cr.metadata.name.as_deref().unwrap_or("[unknown]"));
+                        info!(
+                            "PersistentVolumeSync resource found: '{}'. Starting controller.",
+                            cr.metadata.name.as_deref().unwrap_or("[unknown]")
+                        );
                         return Ok(cr);
                     }
                     _ => {
                         // Case 3: More than one CR found (Ambiguous/Error state for a single-config operator)
-                        error!("Found {} PersistentVolumeSync resources. Expected exactly one for global configuration. Retrying in 60 seconds...", list.items.len());
+                        error!(
+                            "Found {} PersistentVolumeSync resources. Expected exactly one for global configuration. Retrying in 60 seconds...",
+                            list.items.len()
+                        );
                         sleep(Duration::from_secs(60)).await;
                     }
                 }
             }
             Err(kube::Error::Api(e)) if e.code == 404 => {
                 // This typically means the CRD itself hasn't been applied yet.
-                error!("Custom Resource Definition (CRD) for PersistentVolumeSync not found (404). Retrying in 60 seconds...");
+                error!(
+                    "Custom Resource Definition (CRD) for PersistentVolumeSync not found (404). Retrying in 60 seconds..."
+                );
                 sleep(Duration::from_secs(60)).await;
             }
             Err(e) => {
                 // Other API error (e.g., connection issue, permission denied)
-                error!("API error while checking for config: {:?}. Retrying in 30 seconds...", e);
+                error!(
+                    "API error while checking for config: {:?}. Retrying in 30 seconds...",
+                    e
+                );
                 sleep(Duration::from_secs(30)).await;
             }
         }
@@ -297,3 +321,30 @@ pub enum Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+async fn start_cr_cleanup_watcher(client: Client, shutdown_tx: watch::Sender<bool>) {
+    tokio::spawn({
+        let client = client.clone();
+        let shutdown_tx = shutdown_tx.clone();
+
+        async move {
+            let api = Api::<PersistentVolumeSync>::all(client);
+
+            loop {
+                let count = api
+                    .list(&Default::default())
+                    .await
+                    .map(|l| l.items.len())
+                    .unwrap_or(0);
+
+                if count < 1 {
+                    tracing::info!("no CRs left, shutting down");
+                    let _ = shutdown_tx.send(true);
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        }
+    });
+}
