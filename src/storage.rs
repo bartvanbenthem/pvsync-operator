@@ -370,7 +370,7 @@ pub async fn start_object_store_watcher(
     let provider: &str = cr.spec.cloud_provider.as_str();
     let raw_store: Box<dyn ObjectStore> = initialize_object_store(provider).await?;
 
-    // 2. WRAP THE STORE IN AN ARC TO ENABLE SHARING AND CLONING (Reference Counting)
+    // OBJECT STORE IN AN ARC TO ENABLE SHARING AND CLONING (Reference Counting)
     // We assume the type of raw_store is Box<dyn ObjectStore>.
     let object_store: Arc<dyn ObjectStore> = Arc::from(raw_store);
 
@@ -412,7 +412,6 @@ pub async fn start_object_store_watcher(
                         debug!("Object list retrieved, but no effective change detected.");
                     }
                 }
-
                 None => {
                     // 2. Error during Poll
                     info!("Object Store Watcher Poll Failed (see logs above). Retrying...");
