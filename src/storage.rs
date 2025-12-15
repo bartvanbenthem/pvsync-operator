@@ -18,13 +18,16 @@ use bytes::Bytes;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::path::Path;
-use object_store::{ObjectStore, PutPayload};
+use object_store::{ObjectStore, PutPayload, Error as ObjectStoreError};
 // Re-aliasing for the Kubernetes ObjectMeta conflict (if still needed)
 use chrono::{Duration, Utc};
 use futures::TryStreamExt;
 use object_store::ObjectMeta as StoreObjectMeta;
 use std::env;
 use std::sync::Arc;
+
+use tokio::{sync::mpsc, task, time::sleep};
+use tracing::{debug}; 
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageObjectBundle {
@@ -96,7 +99,7 @@ pub async fn populate_storage_bundle(
     })
 }
 
-async fn initialize_object_store(provider: &str) -> Result<Box<dyn ObjectStore>> {
+pub async fn initialize_object_store(provider: &str) -> Result<Box<dyn ObjectStore>> {
     let store = match provider {
         "azure" => {
             let container_name = env::var("OBJECT_STORAGE_BUCKET")
@@ -406,4 +409,133 @@ pub fn dummy_storage_bundle() -> StorageObjectBundle {
     bundle.add_persistent_volume_claim(pvc);
 
     bundle
+}
+
+/////////////////////////////////////////////////
+
+// --- Data Structures ---
+
+// Tracks object paths/metadata to detect changes in the listing of a prefix.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+struct ObjectListing(Vec<String>);
+
+/// Enum to represent the possible outcomes of the object store list poll.
+enum PollResult {
+    Changed { new_listing: ObjectListing },
+}
+
+// --- Watcher Core ---
+
+/// Watcher for an object store prefix using listing comparison to detect changes.
+pub async fn start_object_store_watcher(
+    cr: &PersistentVolumeSync,
+    external_prefix: Path,
+    polling_interval: Duration,
+    tx: mpsc::Sender<()>,
+) -> Result<(), anyhow::Error> {
+    // Store the object paths/metadata from the last successful list
+    let mut last_state: Option<ObjectListing> = None;
+
+    let provider = cr.spec.cloud_provider.as_str();
+    let raw_store = initialize_object_store(provider).await?;
+    
+    // 2. WRAP THE STORE IN AN ARC TO ENABLE SHARING AND CLONING (Reference Counting)
+    // We assume the type of raw_store is Box<dyn ObjectStore>.
+    let object_store: Arc<dyn ObjectStore> = Arc::from(raw_store);
+
+    info!(
+        "Starting object_store-based watcher for prefix: {}",
+        external_prefix
+    );
+
+    task::spawn(async move {
+        loop {
+            // Wait for the polling interval
+            sleep(polling_interval.to_std().unwrap_or_default()).await;
+
+            debug!(
+                "Polling object store prefix. Last state size: {:?}",
+                last_state.as_ref().map(|l| l.0.len())
+            );
+
+            match poll_object_store_prefix(
+                object_store.clone(),
+                external_prefix.clone(),
+            )
+            .await
+            {
+                Some(PollResult::Changed { new_listing }) => {
+                    // 1. Change Detected (New listing data)
+                    if last_state.as_ref() != Some(&new_listing) {
+                         info!(
+                            "Object Store Prefix Change Detected! New list size: {}",
+                            new_listing.0.len()
+                        );
+                        
+                        last_state = Some(new_listing);
+
+                        // Send signal to the controller/reconciler
+                        if let Err(e) = tx.send(()).await {
+                            info!("Failed to send change signal, receiver likely dropped: {}", e);
+                            break;
+                        }
+                    } else {
+                        debug!("Object list retrieved, but no effective change detected.");
+                    }
+                }
+
+                None => {
+                    // 2. Error during Poll
+                    info!("Object Store Watcher Poll Failed (see logs above). Retrying...");
+                }
+            }
+        }
+
+        info!("Object store watcher task finished.");
+    });
+
+    Ok(())
+}
+
+// --- Polling Logic ---
+
+/// Fetches the resource listing from the object store prefix.
+async fn poll_object_store_prefix(
+    store: Arc<dyn ObjectStore>,
+    prefix: Path,
+) -> Option<PollResult> {
+    
+    // FIX: Assign the stream directly. The compiler has confirmed store.list() 
+    // returns Pin<Box<dyn Stream<...>>> in this environment, not a Result wrapper.
+    let listing_stream = store.list(Some(&prefix));
+
+    // Consume the stream and collect object metadata.
+    let all_objects: Vec<StoreObjectMeta> = match listing_stream
+        .try_collect::<Vec<StoreObjectMeta>>() // Use the correct StoreObjectMeta type
+        .await
+    {
+        Ok(objects) => objects,
+        Err(e) => {
+            // Handle the error that occurred while reading the stream (list collection failure).
+            match e {
+                ObjectStoreError::NotFound { path, source: _ } => {
+                    info!("Object store prefix not found: {}", path);
+                }
+                _ => {
+                    info!("Object store listing failed during collection: {}", e);
+                }
+            }
+            return None;
+        }
+    };
+
+    // Map the metadata into our simplified listing structure.
+    let paths: Vec<String> = all_objects
+        .into_iter()
+        .map(|meta| meta.location.to_string())
+        .collect();
+
+    Some(PollResult::Changed {
+        new_listing: ObjectListing(paths),
+    })
 }

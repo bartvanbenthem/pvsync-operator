@@ -1,4 +1,3 @@
-mod extwatcher;
 mod resource;
 
 use pvsync::crd::PersistentVolumeSync;
@@ -20,9 +19,9 @@ use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::*;
 
-use reqwest::Client as HTTPClient;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+
 
 /// Context injected with each `reconcile` and `on_error` method invocation.
 struct ContextData {
@@ -105,25 +104,14 @@ async fn main() -> Result<(), Error> {
             })
             .await;
     } else if mode == SyncMode::Recovery {
-        let http_client = HTTPClient::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
-
-        let polling_interval = Duration::from_secs(30);
-        let external_endpoint = "https://kmcsacoreo6stwydepx3kc.blob.core.windows.net/test-rs-container?sp=r&st=2025-12-15T09:38:55Z&se=2025-12-15T17:53:55Z&sv=2024-11-04&sr=c&sig=c80qmFJrZ3HOZJqEBtQQyvUokK3w4%2BKR25QsSV%2Frz40%3D".to_string();
-
+        // Setup HTTP client for external object store access
+        //let polling_interval = Duration::from_secs(30);
         // channel to trigger global reconciles
-        let (tx, rx) = mpsc::channel::<()>(16);
+        //let (tx, rx) = mpsc::channel::<()>(16);
         // converts mpsc into a stream
-        let signal_stream = ReceiverStream::new(rx);
+        //let signal_stream = ReceiverStream::new(rx);
         // Start the Persistant Volume watcher in background
-        extwatcher::start_external_watcher_etag(
-            http_client,
-            external_endpoint,
-            polling_interval,
-            tx,
-        )
-        .await?;
+
         // The controller comes from the `kube_runtime` crate and manages the reconciliation process.
         // It requires the following information:
         // - `kube::Api<T>` this controller "owns". In this case, `T = PersistentVolumeSync`, as this controller owns the `PersistentVolumeSync` resource,
@@ -132,7 +120,7 @@ async fn main() -> Result<(), Error> {
         // - `on_error` function to call whenever reconciliation fails.
         Controller::new(crd_api.clone(), Config::default())
             .shutdown_on_signal()
-            .reconcile_all_on(signal_stream)
+            //.reconcile_all_on(signal_stream)
             .run(reconcile_recovery, on_error, context)
             .for_each(|reconciliation_result| async move {
                 match reconciliation_result {
@@ -159,7 +147,7 @@ async fn reconcile_recovery(
 
     info!("Reconcile Recovery");
 
-    Ok(Action::requeue(Duration::from_secs(100)))
+    Ok(Action::requeue(Duration::from_secs(1000)))
 }
 
 async fn reconcile_protected(
@@ -244,11 +232,13 @@ pub enum Error {
     },
 
     /// Error making an HTTP request to the external endpoint.
+    /*
     #[error("HTTP request error to external resource: {source}")]
     ReqwestError {
         #[from]
         source: reqwest::Error,
     },
+    */
 
     /// Error in user input or PersistentVolumeSync resource definition, typically missing fields.
     #[error("Invalid PersistentVolumeSync CRD: {0}")]
