@@ -1,5 +1,6 @@
 mod resource;
 
+use kube::Resource;
 use pvsync::crd::PersistentVolumeSync;
 use pvsync::crd::PersistentVolumeSyncStatus;
 use pvsync::crd::SyncMode;
@@ -10,9 +11,9 @@ use pvsync::utils;
 use chrono::Utc;
 use futures::stream::StreamExt;
 use k8s_openapi::api::core::v1::PersistentVolume;
+use kube::api::ListParams;
 use kube::Config as KubeConfig;
 use kube::ResourceExt;
-use kube::api::ListParams;
 use kube::runtime::watcher::Config;
 use kube::{Api, client::Client, runtime::Controller, runtime::controller::Action};
 use std::sync::Arc;
@@ -21,7 +22,7 @@ use tracing::*;
 
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-
+use tokio::time::sleep;
 
 /// Context injected with each `reconcile` and `on_error` method invocation.
 struct ContextData {
@@ -52,27 +53,18 @@ async fn main() -> Result<(), Error> {
         .map_err(|e| kube::Error::InferConfig(e))?;
     let client: Client = Client::try_from(config)?;
 
-    let context: Arc<ContextData> = Arc::new(ContextData::new(client.clone()));
+    // Environment Setup trough .env file
+    dotenvy::dotenv().ok();
 
-    // Preparation of resources used by the `kube_runtime::Controller`
+    // BLOCKING CONFIGURATION CHECK
+    // This call will pause until the configuration is available or a fatal error occurs.
+    // This call will pause the execution of main until the CR is available.
+    let cr_to_watch = wait_for_initial_cr(client.clone()).await?;
+    // Create the Api for the CRD
     let crd_api: Api<PersistentVolumeSync> = Api::all(client.clone());
-    let cr_list = crd_api.list(&ListParams::default()).await?;
-
-    // 1. Check for a single CR
-    if cr_list.items.len() != 1 {
-        error!(
-            "Expected exactly one PersistentVolumeSync resource for global mode configuration, found {}. Shutting down.",
-            cr_list.items.len()
-        );
-        // Return an error to stop the application gracefully
-        return Err(Error::UserInputError(format!(
-            "Configuration Error: Expected exactly one PersistentVolumeSync resource, found {}",
-            cr_list.items.len()
-        )));
-    }
-
-    let cr_to_watch = cr_list.items.clone().into_iter().next().unwrap();
-    let mode = cr_to_watch.spec.mode;
+    // Shared context for the reconciler functions
+    let context: Arc<ContextData> = Arc::new(ContextData::new(client.clone()));
+    let mode = cr_to_watch.spec.mode.clone();
 
     if mode == SyncMode::Protected {
         // channel to trigger global reconciles
@@ -104,12 +96,11 @@ async fn main() -> Result<(), Error> {
             .await;
     } else if mode == SyncMode::Recovery {
         // get the single CR
-        let cr = cr_list.items.clone().into_iter().next().unwrap();
+        let cr = cr_to_watch.clone();
         let polling_interval: Duration;
         if cr.spec.polling_interval.is_none() {
             polling_interval = Duration::from_secs(30);
-        }
-        else {
+        } else {
             polling_interval = Duration::from_secs(cr.spec.polling_interval.unwrap_or_default())
         }
         // channel to trigger global reconciles
@@ -150,7 +141,15 @@ async fn reconcile_recovery(
 ) -> Result<Action, Error> {
     let _ = cr;
     let _ = context;
-    
+
+    // If the CR has a deletion timestamp, it has been marked for removal.
+    // For a critical, single-instance CR, we should force an exit/failure.
+    let name = cr.name_any();
+    if cr.meta().deletion_timestamp.is_some() {
+        // Return the new fatal error
+        return Err(Error::DeletedCriticalResource(name)); 
+    }
+
     info!("Reconcile Recovery");
 
     Ok(Action::requeue(Duration::from_secs(32000)))
@@ -189,6 +188,57 @@ async fn reconcile_protected(
     info!("{:?}", updated_cr.status.unwrap_or(status.clone()));
 
     Ok(Action::requeue(Duration::from_secs(32000)))
+}
+
+/// Waits indefinitely for a single PersistentVolumeSync resource to be applied.
+/// Polls the Kubernetes API for a list of resources every 10 seconds.
+async fn wait_for_initial_cr(client: Client) -> Result<PersistentVolumeSync, Error> {
+    // Api::all(client) creates a cluster-scoped API client
+    let api: Api<PersistentVolumeSync> = Api::all(client);
+    // Log waiting message
+    info!("Waiting for the single required PersistentVolumeSync resource to be applied...");
+    // We can use default ListParams as we are not applying labels/fields filtering
+    let lp = ListParams::default(); 
+    // Start polling loop
+    loop {
+        match api.list(&lp).await {
+            Ok(list) => {
+                match list.items.len() {
+                    0 => {
+                        // Case 1: No CR found
+                        info!("No PersistentVolumeSync resource found. Retrying in 10 seconds...");
+                    }
+                    1 => {
+                        // Case 2: Exactly one CR found (Success case)
+                        let cr = list.items.into_iter().next().unwrap();
+
+                        // ** Perform Validation Here **
+                        // If validation fails, log error and continue (or return a specific error)
+
+                        info!("PersistentVolumeSync resource found: '{}'. Starting controller.", cr.metadata.name.as_deref().unwrap_or("[unknown]"));
+                        return Ok(cr);
+                    }
+                    _ => {
+                        // Case 3: More than one CR found (Ambiguous/Error state for a single-config operator)
+                        error!("Found {} PersistentVolumeSync resources. Expected exactly one for global configuration. Retrying in 60 seconds...", list.items.len());
+                        sleep(Duration::from_secs(60)).await;
+                    }
+                }
+            }
+            Err(kube::Error::Api(e)) if e.code == 404 => {
+                // This typically means the CRD itself hasn't been applied yet.
+                error!("Custom Resource Definition (CRD) for PersistentVolumeSync not found (404). Retrying in 60 seconds...");
+                sleep(Duration::from_secs(60)).await;
+            }
+            Err(e) => {
+                // Other API error (e.g., connection issue, permission denied)
+                error!("API error while checking for config: {:?}. Retrying in 30 seconds...", e);
+                sleep(Duration::from_secs(30)).await;
+            }
+        }
+        // Short sleep before next polling attempt
+        sleep(Duration::from_secs(10)).await; // Short sleep for the main polling loop
+    }
 }
 
 fn on_error(cr: Arc<PersistentVolumeSync>, error: &Error, context: Arc<ContextData>) -> Action {
@@ -246,6 +296,10 @@ pub enum Error {
     },
     */
 
+    /// The critical configuration resource was deleted, requiring operator restart.
+    #[error("Critical configuration resource was deleted: {0}")]
+    DeletedCriticalResource(String),
+
     /// Error in user input or PersistentVolumeSync resource definition, typically missing fields.
     #[error("Invalid PersistentVolumeSync CRD: {0}")]
     UserInputError(String),
@@ -256,3 +310,16 @@ pub enum Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+fn exit_process_on_delete(name: &str) -> Result<Action, Error> {
+    error!("FATAL: The required PersistentVolumeSync CR '{}' was deleted. Exiting to trigger operator restart.", name);
+    
+    // We can't exit the process directly here because the reconciler runs in a thread.
+    // Instead, we return a specific error that the main error handling can catch, 
+    // OR we rely on the controller eventually shutting down after deletion.
+    
+    // **A cleaner method is to use a specific, unrecoverable error.**
+    // Let's modify our Error enum slightly.
+    
+    Err(Error::DeletedCriticalResource(name.to_string()))
+}

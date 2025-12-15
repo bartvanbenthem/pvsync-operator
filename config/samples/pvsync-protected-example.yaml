@@ -11,4 +11,4 @@ spec:
   protectedCluster: mylocalcluster # name or id of the protected cluster
   mode: Protected # Protected | Recovery
   cloudProvider: azure # azure | s3
-  retention: 15 # retention in days
+  retention: 5 # retention in days

@@ -15,20 +15,20 @@ use kube::Client;
 use serde::{Deserialize, Serialize};
 
 use bytes::Bytes;
+use chrono::Duration as ChronoDuration;
+use chrono::Utc;
+use futures::TryStreamExt;
+use object_store::ObjectMeta as StoreObjectMeta;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::path::Path;
-use object_store::{ObjectStore, PutPayload, Error as ObjectStoreError};
-use chrono::Utc;
-use chrono::Duration as ChronoDuration;
-use std::time::Duration;
-use futures::TryStreamExt;
-use object_store::ObjectMeta as StoreObjectMeta;
+use object_store::{Error as ObjectStoreError, ObjectStore, PutPayload};
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::{sync::mpsc, task, time::sleep};
-use tracing::{debug}; 
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageObjectBundle {
@@ -132,9 +132,6 @@ pub async fn write_objects_to_object_store(
     timestamp: i64,
     storage_objects: StorageObjectBundle,
 ) -> anyhow::Result<()> {
-    // 1. Environment Setup
-    dotenvy::dotenv().ok();
-
     // 2. Configuration Extraction
     let provider = &cr.spec.cloud_provider.to_lowercase();
     let cluster = &cr.spec.protected_cluster.to_lowercase();
@@ -272,16 +269,13 @@ pub async fn write_data(store: Arc<dyn ObjectStore>, path: &str, data: &[u8]) ->
 /// * `cr` - Reference to the PersistentVolumeSync Custom Resource for configuration.
 /// * `retention_days` - The number of days to retain logs (logs older than this are deleted).
 pub async fn cleanup_old_objects(cr: &PersistentVolumeSync) -> anyhow::Result<()> {
-    // 1. Environment Setup (Dev only)
-    dotenvy::dotenv().ok();
-
-    // 2. Configuration Extraction
+    // Configuration Extraction
     let provider = &cr.spec.cloud_provider.to_lowercase();
     let cluster = &cr.spec.protected_cluster.to_lowercase();
     let retention_days = cr.spec.retention;
 
-    // 3. Calculate Cutoff Timestamp
-    // FIX E0425: This entire block must execute and define the variable *before* it's used.
+    // Calculate Cutoff Timestamp
+    // This entire block must execute and define the variable *before* it's used.
     let retention_duration = ChronoDuration::days(retention_days as i64);
     let cutoff_time = Utc::now() - retention_duration;
     let cutoff_timestamp_sec = cutoff_time.timestamp(); // Variable is now in scope
@@ -292,7 +286,7 @@ pub async fn cleanup_old_objects(cr: &PersistentVolumeSync) -> anyhow::Result<()
         &cluster, retention_days, cutoff_timestamp_sec
     );
 
-    // 4. Object Store Initialization
+    // Object Store Initialization
     let store: Arc<dyn ObjectStore> = initialize_object_store(provider.as_str()).await?.into();
 
     // Define Object Prefix
@@ -300,12 +294,11 @@ pub async fn cleanup_old_objects(cr: &PersistentVolumeSync) -> anyhow::Result<()
 
     // List, Filter, and Delete Objects
 
-    // FIX E0277: ObjectStore::list returns the Stream directly
+    // ObjectStore::list returns the Stream directly
     let objects_stream = store.list(Some(&prefix));
 
     let objects_to_delete: Vec<Path> = objects_stream
         .try_filter_map(|meta: StoreObjectMeta| async move {
-            // FIX E0599: Use the correct method name `filename()`
             if let Some(filename) = meta.location.filename() {
                 // filename is likely a &str here, so split() should work
                 if let Some(timestamp_str) = filename.split('_').next() {
@@ -425,7 +418,7 @@ enum PollResult {
     Changed { new_listing: ObjectListing },
 }
 
-// --- Watcher Core ---
+// --- Object Store Watcher Core ---
 
 /// Watcher for an object store prefix using listing comparison to detect changes.
 pub async fn start_object_store_watcher(
@@ -433,16 +426,14 @@ pub async fn start_object_store_watcher(
     polling_interval: Duration,
     tx: mpsc::Sender<()>,
 ) -> Result<(), anyhow::Error> {
-     // 1. Environment Setup
-    dotenvy::dotenv().ok();
     // Store the object paths/metadata from the last successful list
     let mut last_state: Option<ObjectListing> = None;
-    
+
     // 1. INITIALIZE THE OBJECT STORE BASED ON THE CR SPECIFICATIONS
     let external_prefix: Path = cr.spec.protected_cluster.clone().into();
     let provider: &str = cr.spec.cloud_provider.as_str();
     let raw_store: Box<dyn ObjectStore> = initialize_object_store(provider).await?;
-    
+
     // 2. WRAP THE STORE IN AN ARC TO ENABLE SHARING AND CLONING (Reference Counting)
     // We assume the type of raw_store is Box<dyn ObjectStore>.
     let object_store: Arc<dyn ObjectStore> = Arc::from(raw_store);
@@ -462,25 +453,23 @@ pub async fn start_object_store_watcher(
                 last_state.as_ref().map(|l| l.0.len())
             );
 
-            match poll_object_store_prefix(
-                object_store.clone(),
-                external_prefix.clone(),
-            )
-            .await
-            {
+            match poll_object_store_prefix(object_store.clone(), external_prefix.clone()).await {
                 Some(PollResult::Changed { new_listing }) => {
                     // 1. Change Detected (New listing data)
                     if last_state.as_ref() != Some(&new_listing) {
-                         info!(
+                        info!(
                             "Object Store Prefix Change Detected! New list size: {}",
                             new_listing.0.len()
                         );
-                        
+
                         last_state = Some(new_listing);
 
                         // Send signal to the controller/reconciler
                         if let Err(e) = tx.send(()).await {
-                            info!("Failed to send change signal, receiver likely dropped: {}", e);
+                            info!(
+                                "Failed to send change signal, receiver likely dropped: {}",
+                                e
+                            );
                             break;
                         }
                     } else {
@@ -504,12 +493,8 @@ pub async fn start_object_store_watcher(
 // --- Polling Logic ---
 
 /// Fetches the resource listing from the object store prefix.
-async fn poll_object_store_prefix(
-    store: Arc<dyn ObjectStore>,
-    prefix: Path,
-) -> Option<PollResult> {
-    
-    // FIX: Assign the stream directly. The compiler has confirmed store.list() 
+async fn poll_object_store_prefix(store: Arc<dyn ObjectStore>, prefix: Path) -> Option<PollResult> {
+    // FIX: Assign the stream directly. The compiler has confirmed store.list()
     // returns Pin<Box<dyn Stream<...>>> in this environment, not a Result wrapper.
     let listing_stream = store.list(Some(&prefix));
 

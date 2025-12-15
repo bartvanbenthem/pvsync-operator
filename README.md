@@ -19,8 +19,9 @@ It enables disaster-recovery scenarios by exporting PV metadata from a Protected
 
 ### upcoming release
 Features in currently in development for the upcoming release:
-* remove old logs based on a given retention time in days in the cr spec
 * auto rebuild pv on Recovery cluster
+* when the last custom resource is removed, let kubernetes restart the operator.
+* instead of an external watcher on Polling/Listing Comparison, investigate an alternative based on ETAG
 
 ## Build container
 ```bash
@@ -103,7 +104,7 @@ spec:
   protectedCluster: mylocalcluster # name or id of the protected cluster
   mode: Protected # Protected | Recovery
   cloudProvider: azure # azure | s3
-  retention: 15 # retention in days
+  retention: 5 # retention in days
 ---
 apiVersion: storage.cndev.nl/v1alpha1
 kind: PersistentVolumeSync
@@ -118,6 +119,6 @@ spec:
   protectedCluster: mylocalcluster # name or id of the recovery cluster
   mode: Recovery # Protected | Recovery
   cloudProvider: azure # azure | s3
-  retention: 15 # retention in days
+  retention: 5 # retention in days
   pollingInterval: 25 # polling interval to object store in seconds
 ```
