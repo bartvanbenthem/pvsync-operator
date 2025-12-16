@@ -116,7 +116,7 @@ where
 #[allow(dead_code)]
 pub async fn apply_namespaced_resource<T>(
     client: Client,
-    namespace: &str, // <--- NEW ARGUMENT
+    namespace: &str,
     resource: &T,
     field_manager: &str,
 ) -> Result<T, kube::Error>
@@ -124,24 +124,25 @@ where
     // T must implement the NamespaceResourceScope trait implicitly (via Resource bound)
     T: Clone
         + Debug
-        + Resource<DynamicType = (), Scope = NamespaceResourceScope> // <--- SCOPE CHANGE
+        + Resource<DynamicType = (), Scope = NamespaceResourceScope>
         + Metadata<Ty = ObjectMeta>
         + DeserializeOwned
         + Serialize
-        + Default // Retaining from your original code, though technically only needed for T::default()
+        + Default
+        // Retaining from your original code, though technically only needed for T::default()
         + Send
         + Sync
         + 'static,
 {
     // Use Api::namespaced() for namespaced resources
-    let api: Api<T> = Api::namespaced(client, namespace); // <--- API CHANGE
+    let api: Api<T> = Api::namespaced(client, namespace);
 
     // Resource name must be derived from the resource's metadata
     let name = resource.metadata().name.as_deref().unwrap_or("[No Name]");
-    
+
     // Configure the Server-Side Apply parameters
     let params = PatchParams::apply(field_manager);
-    
+
     // Get the resource Kind for logging, using &()
     let kind = T::kind(&());
     info!(
@@ -164,22 +165,22 @@ where
 /// - `name`: The name of the resource to delete.
 #[allow(dead_code)]
 pub async fn delete_namespaced_resource<T>(
-    client: Client, 
-    namespace: &str, // <--- NEW ARGUMENT
+    client: Client,
+    namespace: &str,
     name: &str,
 ) -> Result<(), kube::Error>
 where
     // T must implement the NamespaceResourceScope trait implicitly (via Resource bound)
-    T: Resource<DynamicType = (), Scope = NamespaceResourceScope> // <--- SCOPE CHANGE
-        + Debug 
-        + DeserializeOwned 
-        + Clone 
-        + Send 
-        + Sync 
+    T: Resource<DynamicType = (), Scope = NamespaceResourceScope>
+        + Debug
+        + DeserializeOwned
+        + Clone
+        + Send
+        + Sync
         + 'static,
 {
     // Use Api::namespaced() for namespaced resources.
-    let api: Api<T> = Api::namespaced(client, namespace); // <--- API CHANGE
+    let api: Api<T> = Api::namespaced(client, namespace);
 
     // Get the resource Kind for logging, using &()
     let kind = T::kind(&());
@@ -199,7 +200,7 @@ where
 pub async fn start_watcher_label<T>(
     client: Client,
     tx: mpsc::Sender<()>,
-    label_selector: &str, // Add an argument for the selector
+    label_selector: &str,
 ) -> Result<(), anyhow::Error>
 where
     T: Clone

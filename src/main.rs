@@ -75,7 +75,7 @@ async fn main() -> Result<(), Error> {
         // converts mpsc into a stream
         let signal_stream = ReceiverStream::new(rx);
         // Start the Persistant Volume watcher in background
-        
+
         resource::start_watcher_label::<PersistentVolume>(client.clone(), tx, SYNC_LABEL).await?;
         // The controller comes from the `kube_runtime` crate and manages the reconciliation process.
         // It requires the following information:
@@ -157,7 +157,7 @@ async fn reconcile_recovery(
     // The `Client` is shared -> a clone from the reference is obtained
     let client: Client = context.client.clone();
     // Name of the PersistentVolumeSync resource is used to name the subresources as well.
-    let name = cr.name_any();
+    let name: String = cr.name_any();
 
     info!("Reconcile Recovery");
 
@@ -167,8 +167,11 @@ async fn reconcile_recovery(
         .await?;
 
     let kpv: Api<PersistentVolume> = Api::all(client.clone());
-    warn!("{:?}", &kpv);
+    for pv in kpv.list(&ListParams::default()).await?.items {
+        warn!("Found PV: {}", pv.name_any());
+    }
 
+    //delete pv
     resource::delete_cluster_resource::<PersistentVolume>(client.clone(), &name).await?;
 
     //update status
@@ -176,7 +179,7 @@ async fn reconcile_recovery(
         succeeded: true,
         ..Default::default()
     };
-    //let updated_cr = status::patch(client.clone(), &name, status.clone()).await?;
+
     let updated_cr: PersistentVolumeSync =
         status::patch_cr_cluster(client.clone(), &name, status.clone()).await?;
     info!("{:?}", updated_cr.status.unwrap_or(status.clone()));
