@@ -303,7 +303,7 @@ pub async fn cleanup_old_objects(cr: &PersistentVolumeSync) -> anyhow::Result<()
                 // filename is likely a &str here, so split() should work
                 if let Some(timestamp_str) = filename.split('_').next() {
                     if let Ok(file_timestamp) = timestamp_str.parse::<i64>() {
-                        // FIX E0425: Variable is now in scope here:
+                        // Variable is now in scope here:
                         if file_timestamp < cutoff_timestamp_sec {
                             // Object is older than retention, mark for deletion
                             return Ok(Some(meta.location));
