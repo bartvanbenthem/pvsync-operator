@@ -307,34 +307,28 @@ async fn start_cr_cleanup_watcher(client: Client, shutdown_tx: watch::Sender<boo
     });
 }
 
-fn on_error(cr: Arc<PersistentVolumeSync>, error: &Error, context: Arc<ContextData>) -> Action {
-    let client = context.client.clone();
+fn on_error(cr: Arc<PersistentVolumeSync>, error: &Error, _context: Arc<ContextData>) -> Action {
     let name = cr.name_any();
-    let namespace = cr.namespace().unwrap_or_else(|| "default".to_string());
+    
+    // Instead of defaulting to "default", let's reflect the actual scope in logs.
+    let ns_log = cr.namespace().unwrap_or_else(|| "cluster-scoped".to_string());
 
     error!(
         error = ?error,
         name = %name,
-        namespace = %namespace,
+        namespace = %ns_log, 
         "Reconciliation error occurred"
     );
 
-    // Spawn async patch inside sync function
-    tokio::spawn(async move {
-        let status = PersistentVolumeSyncStatus {
-            succeeded: false,
-            ..Default::default()
-        };
-        if let Err(e) =
-            status::patch_cr_cluster::<PersistentVolumeSync, _>(client, &name, status).await
-        {
-            error!("Failed to update status: {:?}", e);
-        }
-    });
-
-    // Requeue to try again later
-    Action::requeue(Duration::from_secs(5))
+    match error {
+        // User errors usually require a manual fix; don't hammer the API.
+        Error::UserInputError(_) => Action::requeue(Duration::from_secs(60)),
+        
+        // Transient errors (network, 409 conflicts, etc) get a faster retry.
+        _ => Action::requeue(Duration::from_secs(5)),
+    }
 }
+
 
 /// All errors possible to occur during reconciliation
 #[derive(Debug, thiserror::Error)]
