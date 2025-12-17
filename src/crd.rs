@@ -48,3 +48,15 @@ pub struct Annotation {
 pub struct PersistentVolumeSyncStatus {
     pub succeeded: bool,
 }
+
+/*
+// status to develop further
+// For example, you might want to add fields like 'last_run', 'error_message',
+#[derive(Serialize, Deserialize, Clone, Debug, Default, JsonSchema)]
+pub struct PersistentVolumeSyncStatus {
+    pub succeeded: bool,
+    pub error_message: Option<String>,
+    pub last_run: Option<chrono::DateTime<chrono::Utc>>,
+    pub managed_volumes: Vec<String>, // The new field
+}
+*/

@@ -20,6 +20,7 @@ It enables disaster-recovery scenarios by exporting PV metadata from a Protected
 ### upcoming release
 Features in currently in development for the upcoming release:
 * auto rebuild pv on Recovery cluster
+* update status with more information
 * instead of an external watcher on Polling/Listing Comparison, investigate an alternative based on ETAG
 
 ## Build container
