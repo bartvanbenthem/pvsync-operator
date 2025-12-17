@@ -46,7 +46,7 @@ pub async fn patch_cr_namespaced<K, S>(
 ) -> Result<K, Error>
 where
     K: Resource<Scope = NamespaceResourceScope> + Clone + DeserializeOwned + Serialize + 'static,
-    K::DynamicType: Default, // This allows us to call Default::default()
+    K::DynamicType: Default, // This allows to call Default::default()
     S: Serialize,
 {
     // Api::namespaced is used for namespace-scoped resources

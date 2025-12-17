@@ -185,23 +185,9 @@ async fn reconcile_recovery(
     .await;
 
     // Prepare the status based on the outcome of the logic block
-    let status = PersistentVolumeSyncStatus {
-        succeeded: reconcile_result.is_ok(),
-        ..Default::default()
-    };
-
-    // Patch the status subresource (Cluster-scoped only)
+    // Patch the status subresource of the CustomResource (Cluster-scoped only)
     // We await this so the status is confirmed before the next cycle starts.
-    if let Err(e) = status::patch_cr_cluster::<PersistentVolumeSync, PersistentVolumeSyncStatus>(
-        client.clone(),
-        &name,
-        status,
-        "pvsync-operator",
-    )
-    .await
-    {
-        error!(error = ?e, "Failed to update status subresource");
-    }
+    update_status(client.clone(), &name, &reconcile_result).await;
 
     // Return the result
     match reconcile_result {
@@ -244,24 +230,10 @@ async fn reconcile_protected(
     }
     .await;
 
-    // Prepare the status based on whether the block above succeeded or failed
-    let status = PersistentVolumeSyncStatus {
-        succeeded: reconcile_result.is_ok(),
-        ..Default::default()
-    };
-
-    // Patch the status subresource (Cluster-scoped)
-    // We await this so the state is committed before potentially requeuing on error
-    if let Err(e) = status::patch_cr_cluster::<PersistentVolumeSync, PersistentVolumeSyncStatus>(
-        client.clone(),
-        &name,
-        status.clone(),
-        "pvsync-operator",
-    )
-    .await
-    {
-        error!(resource = %name, error = ?e, "Failed to update status subresource");
-    }
+    // Prepare the status based on the outcome of the logic block
+    // Patch the status subresource of the CustomResource (Cluster-scoped only)
+    // We await this so the status is confirmed before the next cycle starts.
+    update_status(client.clone(), &name, &reconcile_result).await;
 
     // Final Control Flow
     match reconcile_result {
@@ -275,6 +247,27 @@ async fn reconcile_protected(
             error!(resource = %name, error = ?e, "Protected reconciliation failed");
             Err(e)
         }
+    }
+}
+
+async fn update_status(client: Client, name: &str, reconcile_result: &Result<(), Error>) {
+    // Prepare the status based on the outcome of the logic block
+    let status = PersistentVolumeSyncStatus {
+        succeeded: reconcile_result.is_ok(),
+        ..Default::default()
+    };
+
+    // Patch the status subresource (Cluster-scoped only)
+    // We await this so the status is confirmed before the next cycle starts.
+    if let Err(e) = status::patch_cr_cluster::<PersistentVolumeSync, PersistentVolumeSyncStatus>(
+        client.clone(),
+        &name,
+        status.clone(),
+        "pvsync-operator",
+    )
+    .await
+    {
+        error!(resource = %name, error = ?e, "Failed to update status subresource");
     }
 }
 
