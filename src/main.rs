@@ -167,7 +167,7 @@ async fn reconcile_recovery(
         resource::apply_cluster_resource::<PersistentVolume>(
             client.clone(),
             &pv,
-            "pvsync-operator",
+            &name,
         )
         .await?;
 
@@ -263,7 +263,7 @@ async fn update_status(client: Client, name: &str, reconcile_result: &Result<(),
         client.clone(),
         &name,
         status.clone(),
-        "pvsync-operator",
+        &name,
     )
     .await
     {
