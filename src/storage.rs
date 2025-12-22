@@ -2,8 +2,9 @@ use crate::crd::PersistentVolumeSync;
 use crate::objectstorage;
 use crate::resource;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use tracing::info;
+use bytes::Bytes;
 
 use k8s_openapi::api::core::v1::{
     PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimSpec, PersistentVolumeSpec,
@@ -50,6 +51,16 @@ impl StorageObjectBundle {
     pub fn add_persistent_volume_claim(&mut self, pvc: PersistentVolumeClaim) {
         self.persistent_volume_claims.push(pvc);
     }
+}
+
+/// Deserializes a JSON byte slice into a StorageObjectBundle struct.
+pub fn deserialize_storage_bundle(data: Bytes) -> Result<StorageObjectBundle> {
+    // We use serde_json to parse the bytes directly.
+    // This works because StorageClass, PV, and PVC all implement Serialize/Deserialize.
+    let bundle: StorageObjectBundle = serde_json::from_slice(&data)
+        .map_err(|e| anyhow!("Failed to deserialize StorageObjectBundle: {}", e))?;
+
+    Ok(bundle)
 }
 
 pub async fn populate_storage_bundle(

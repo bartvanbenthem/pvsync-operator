@@ -177,7 +177,12 @@ async fn reconcile_recovery(
         let file = objectstorage::get_latest_file_content(store.into(), "mylocalcluster")
             .await?
             .unwrap();
-        warn!(resource = %name, "Fetched file content: {}", String::from_utf8_lossy(&file));
+
+        let bundle =storage::deserialize_storage_bundle(file.clone())?;
+
+        for pv in bundle.persistent_volumes {
+            info!(resource = %name, "Processing PV: {:?}", pv.metadata.name.unwrap_or_default());
+        }
 
         Ok(())
     }
