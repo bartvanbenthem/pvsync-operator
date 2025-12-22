@@ -3,6 +3,7 @@ mod resource;
 use pvsync::crd::PersistentVolumeSync;
 use pvsync::crd::PersistentVolumeSyncStatus;
 use pvsync::crd::SyncMode;
+use pvsync::objectstorage;
 use pvsync::status;
 use pvsync::storage;
 use pvsync::utils;
@@ -119,7 +120,7 @@ async fn main() -> Result<(), Error> {
         // converts mpsc into a stream
         let signal_stream = ReceiverStream::new(rx);
         // Start the Persistant Volume watcher in background
-        storage::start_object_store_watcher(&cr, polling_interval, tx).await?;
+        objectstorage::start_object_store_watcher(&cr, polling_interval, tx).await?;
         // The controller comes from the `kube_runtime` crate and manages the reconciliation process.
         // It requires the following information:
         // - `kube::Api<T>` this controller "owns". In this case, `T = PersistentVolumeSync`, as this controller owns the `PersistentVolumeSync` resource,
@@ -164,21 +165,13 @@ async fn reconcile_recovery(
         let pv = utils::create_test_pv(&name).await?;
 
         // Apply the PV
-        resource::apply_cluster_resource::<PersistentVolume>(
-            client.clone(),
-            &pv,
-            &name,
-        )
-        .await?;
+        resource::apply_cluster_resource::<PersistentVolume>(client.clone(), &pv, &name).await?;
 
-        // List PVs (for logging/verification)
-        let kpv: Api<PersistentVolume> = Api::all(client.clone());
-        for p in kpv.list(&ListParams::default()).await?.items {
-            info!(pv_name = %p.name_any(), "Found PV in cluster");
-        }
-
-        // Delete the PV
-        resource::delete_cluster_resource::<PersistentVolume>(client.clone(), &name).await?;
+        let store = objectstorage::initialize_object_store(&cr.spec.cloud_provider).await?;
+        let file = objectstorage::get_latest_file_content(store.into(), "mylocalcluster")
+            .await?
+            .unwrap();
+        warn!(resource = %name, "Fetched file content: {}", String::from_utf8_lossy(&file));
 
         Ok(())
     }
@@ -221,7 +214,7 @@ async fn reconcile_protected(
         let storage_bundle = storage::populate_storage_bundle(client.clone(), SYNC_LABEL).await?;
 
         // Upload to backend
-        storage::write_objects_to_object_store(pvsync, tf, storage_bundle).await?;
+        storage::write_bundle_to_object_store(pvsync, tf, storage_bundle).await?;
 
         // Cleanup based on retention
         storage::cleanup_old_objects(pvsync).await?;

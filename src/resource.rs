@@ -79,6 +79,7 @@ where
 /// # Arguments:
 /// - `client`: A Kubernetes client.
 /// - `name`: The name of the resource to delete.
+#[allow(dead_code)]
 pub async fn delete_cluster_resource<T>(client: Client, name: &str) -> Result<(), kube::Error>
 where
     // T needs to be a resource, be debuggable, and allow deserialization (for the delete API response).
