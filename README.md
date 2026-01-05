@@ -3,11 +3,9 @@ The PersistentVolume Sync Operator provides automated, cluster-wide replication 
 It enables disaster-recovery scenarios by exporting PV metadata from a Protected cluster and restoring identical PV definitions into a Recovery cluster.
 
 ## Operator Logic: Metadata Synchronization and Storage Mapping
-
 The VolumeSync Operator facilitates cross-cluster disaster recovery by synchronizing the state and specifications of Kubernetes storage resources. Its behavior is divided into two distinct logical paths:
 
 ### Resource Specification Capture (Sync)
-
 The operator performs a point-in-time capture of the Kubernetes resource specifications for all labeled PersistentVolumes (PV) and PersistentVolumeClaims (PVC).
 
 - Scope: It monitors resources across all StorageClasses to ensure a complete map of the source cluster's storage requirements is maintained.
