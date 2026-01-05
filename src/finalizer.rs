@@ -73,6 +73,7 @@ where
 ///    "default",
 ///)
 ///.await?;
+#[allow(dead_code)]
 pub async fn delete_finalizer_namespaced_resource<T>(
     client: Client,
     name: &str,
@@ -100,6 +101,7 @@ where
 ///    "test-pv",
 ///)
 ///.await?;
+#[allow(dead_code)]
 pub async fn delete_finalizer_cluster_resource<T>(client: Client, name: &str) -> Result<T, Error>
 where
     T: Clone

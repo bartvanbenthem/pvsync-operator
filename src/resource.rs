@@ -33,6 +33,7 @@ use std::sync::Arc;
 /// * `client` - The Kubernetes client
 /// * `name` - The name of the namespace to create/update
 /// * `field_manager` - The name of the controller/service applying the change (for SSA ownership)
+#[allow(dead_code)]
 pub async fn ensure_namespace(
     client: Client,
     name: &str,

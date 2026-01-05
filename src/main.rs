@@ -1,4 +1,5 @@
 mod resource;
+mod finalizer;
 
 use k8s_openapi::api::core::v1::PersistentVolumeClaim;
 use pvsync::crd::PersistentVolumeSync;
@@ -43,6 +44,8 @@ impl ContextData {
 }
 
 pub static SYNC_LABEL: &str = "volumesyncs.storage.cndev.nl/sync=enabled";
+pub static RECOVERY_LABEL: &str = "volumesyncs.storage.cndev.nl/mode=recovery";
+pub static FINALIZER_LABEL: &str = "volumesyncs.storage.cndev.nl/finalizer";
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -178,27 +181,43 @@ async fn reconcile_recovery(
 
         for pv in bundle.persistent_volumes {
             let sanitized = utils::sanitize_pv(&pv);
+            
             resource::apply_cluster_resource::<PersistentVolume>(
                 client.clone(),
                 &sanitized,
-                SYNC_LABEL,
+                RECOVERY_LABEL,
             )
             .await?;
+
+            finalizer::add_finalizer_cluster_resource::<PersistentVolume>(
+                client.clone(),
+                &sanitized.metadata.name.clone().unwrap_or_default(),
+                FINALIZER_LABEL,
+            ).await?;
+
         }
 
         for pvc in bundle.persistent_volume_claims {
             let sanitized = utils::sanitize_pvc(&pvc);
 
             let namespace = &sanitized.metadata.namespace.clone().unwrap_or_default();
-            resource::ensure_namespace(client.clone(), &namespace, SYNC_LABEL).await?;
+            resource::ensure_namespace(client.clone(), &namespace, RECOVERY_LABEL).await?;
 
             resource::apply_namespaced_resource::<PersistentVolumeClaim>(
                 client.clone(),
                 &namespace,
                 &sanitized,
-                SYNC_LABEL,
+                RECOVERY_LABEL,
             )
             .await?;
+
+            finalizer::add_finalizer_namespaced_resource::<PersistentVolumeClaim>(
+                client.clone(),
+                &sanitized.metadata.name.clone().unwrap_or_default(),
+                namespace,
+                FINALIZER_LABEL,
+            ).await?;
+
         }
 
         Ok(())
