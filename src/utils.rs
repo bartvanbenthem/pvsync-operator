@@ -19,7 +19,13 @@ fn clean_metadata(mut meta: ObjectMeta, keep_namespace: bool) -> ObjectMeta {
         } else {
             None
         },
-        labels: meta.labels.take(),
+        // Filter labels to remove your specific domain
+        labels: meta.labels.take().map(|labels| {
+            labels.into_iter()
+                .filter(|(k, _)| !k.starts_with("volumesyncs.storage.cndev.nl"))
+                .collect()
+        }),
+        // Existing annotation filtering
         annotations: meta.annotations.take().map(|ann| {
             ann.into_iter()
                 .filter(|(k, _)| !k.contains("kubernetes.io/"))
