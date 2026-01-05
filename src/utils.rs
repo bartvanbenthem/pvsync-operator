@@ -6,8 +6,64 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use tracing::*;
 
-use k8s_openapi::api::core::v1::PersistentVolume;
+use k8s_openapi::api::core::v1::{PersistentVolume, PersistentVolumeClaim};
 use kube::Error;
+use kube::core::ObjectMeta;
+
+/// Generic metadata cleaner for any Kubernetes resource
+fn clean_metadata(mut meta: ObjectMeta, keep_namespace: bool) -> ObjectMeta {
+    ObjectMeta {
+        name: meta.name.take(),
+        namespace: if keep_namespace {
+            meta.namespace.take()
+        } else {
+            None
+        },
+        labels: meta.labels.take(),
+        annotations: meta.annotations.take().map(|ann| {
+            ann.into_iter()
+                .filter(|(k, _)| !k.contains("kubernetes.io/"))
+                .collect()
+        }),
+        ..Default::default()
+    }
+}
+
+/// Transforms an existing PV into a clean version ready for re-application.
+pub fn sanitize_pv(input: &PersistentVolume) -> PersistentVolume {
+    let mut pv = input.clone();
+
+    // Clean Metadata using generic helper
+    pv.metadata = clean_metadata(pv.metadata, false);
+
+    // Unbind from any existing Claim
+    if let Some(ref mut spec) = pv.spec {
+        spec.claim_ref = None;
+    }
+
+    // Wipe Status
+    pv.status = None;
+
+    pv
+}
+
+/// Transforms an existing PVC into a clean version ready for re-application.
+pub fn sanitize_pvc(input: &PersistentVolumeClaim) -> PersistentVolumeClaim {
+    let mut pvc = input.clone();
+
+    // Clean Metadata using generic helper
+    pvc.metadata = clean_metadata(pvc.metadata, true);
+
+    // Clean Spec
+    if let Some(ref mut spec) = pvc.spec {
+        spec.volume_name = None;
+    }
+
+    // Wipe Status
+    pvc.status = None;
+
+    pvc
+}
 
 pub async fn create_test_pv(name: &str) -> Result<PersistentVolume, Error> {
     let pv: PersistentVolume = serde_json::from_value(serde_json::json!({

@@ -3,8 +3,8 @@ use crate::objectstorage;
 use crate::resource;
 
 use anyhow::{Result, anyhow};
-use tracing::info;
 use bytes::Bytes;
+use tracing::info;
 
 use k8s_openapi::api::core::v1::{
     PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimSpec, PersistentVolumeSpec,

@@ -1,5 +1,6 @@
 mod resource;
 
+use k8s_openapi::api::core::v1::PersistentVolumeClaim;
 use pvsync::crd::PersistentVolumeSync;
 use pvsync::crd::PersistentVolumeSyncStatus;
 use pvsync::crd::SyncMode;
@@ -168,16 +169,32 @@ async fn reconcile_recovery(
     // Execute core logic and capture the result in a block
     // This ensures we can update the status regardless of where it fails.
     let reconcile_result: Result<(), Error> = async {
-
         let store = objectstorage::initialize_object_store(&cr.spec.cloud_provider).await?;
         let file = objectstorage::get_latest_file_content(store.into(), "mylocalcluster")
             .await?
             .unwrap();
 
-        let bundle =storage::deserialize_storage_bundle(file.clone())?;
+        let bundle = storage::deserialize_storage_bundle(file.clone())?;
 
         for pv in bundle.persistent_volumes {
-            info!(resource = %name, "Processing PV: {:?}", pv.metadata.name.unwrap_or_default());
+            let sanitized = utils::sanitize_pv(&pv);
+            resource::apply_cluster_resource::<PersistentVolume>(
+                client.clone(),
+                &sanitized,
+                SYNC_LABEL,
+            )
+            .await?;
+        }
+
+        for pvc in bundle.persistent_volume_claims {
+            let sanitized = utils::sanitize_pvc(&pvc);
+            resource::apply_namespaced_resource::<PersistentVolumeClaim>(
+                client.clone(),
+                &sanitized.metadata.namespace.clone().unwrap_or_default(),
+                &sanitized,
+                SYNC_LABEL,
+            )
+            .await?;
         }
 
         Ok(())
