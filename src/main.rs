@@ -188,9 +188,13 @@ async fn reconcile_recovery(
 
         for pvc in bundle.persistent_volume_claims {
             let sanitized = utils::sanitize_pvc(&pvc);
+
+            let namespace = &sanitized.metadata.namespace.clone().unwrap_or_default();
+            resource::ensure_namespace(client.clone(), &namespace, SYNC_LABEL).await?;
+
             resource::apply_namespaced_resource::<PersistentVolumeClaim>(
                 client.clone(),
-                &sanitized.metadata.namespace.clone().unwrap_or_default(),
+                &namespace,
                 &sanitized,
                 SYNC_LABEL,
             )

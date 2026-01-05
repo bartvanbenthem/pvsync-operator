@@ -2,6 +2,7 @@ use crate::utils;
 
 use k8s_openapi::Metadata;
 use k8s_openapi::NamespaceResourceScope;
+use k8s_openapi::api::core::v1::Namespace;
 use kube::Resource;
 use kube::api::{DeleteParams, Patch, PatchParams};
 use kube::{Api, Client, api::ListParams};
@@ -25,6 +26,37 @@ use tokio::sync::mpsc;
 use tokio::task;
 
 use std::sync::Arc;
+
+/// Ensures a namespace exists using Server-Side Apply.
+///
+/// # Arguments
+/// * `client` - The Kubernetes client
+/// * `name` - The name of the namespace to create/update
+/// * `field_manager` - The name of the controller/service applying the change (for SSA ownership)
+pub async fn ensure_namespace(
+    client: Client,
+    name: &str,
+    field_manager: &str,
+) -> Result<Namespace, kube::Error> {
+    let namespaces: Api<Namespace> = Api::all(client);
+
+    // Create the Namespace struct directly
+    let ns_patch = Namespace {
+        metadata: ObjectMeta {
+            name: Some(name.to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let params = PatchParams::apply(field_manager).force();
+
+    info!("Applying Namespace with name '{}' using SSA...", name);
+    // Use Patch::Apply with the struct reference
+    namespaces
+        .patch(name, &params, &Patch::Apply(&ns_patch))
+        .await
+}
 
 /// Idempotently creates or updates any cluster-scoped Kubernetes resource using Server-Side Apply (SSA).
 ///
