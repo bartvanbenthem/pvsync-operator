@@ -93,7 +93,7 @@ where
     let name = resource.metadata().name.as_deref().unwrap_or("[No Name]");
 
     // Configure the Server-Side Apply parameters
-    let params = PatchParams::apply(field_manager);
+    let params = PatchParams::apply(field_manager).force();
     // Get the resource Kind for logging, using &()
     let kind = T::kind(&());
     info!(
@@ -176,7 +176,7 @@ where
     let name = resource.metadata().name.as_deref().unwrap_or("[No Name]");
 
     // Configure the Server-Side Apply parameters
-    let params = PatchParams::apply(field_manager);
+    let params = PatchParams::apply(field_manager).force();
 
     // Get the resource Kind for logging, using &()
     let kind = T::kind(&());

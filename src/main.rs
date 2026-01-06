@@ -252,6 +252,11 @@ async fn reconcile_recovery(
 
             // Patch Owner Reference (for automatic cleanup)
             sanitized.metadata.owner_references = Some(vec![owner_ref.clone()]);
+            // Ensure the data is never deleted from the physical share
+            if let Some(spec) = sanitized.spec.as_mut() {
+                // Force the policy to Retain to prevent accidental deletion of share data
+                spec.persistent_volume_reclaim_policy = Some("Retain".to_string());
+            }
 
             resource::apply_cluster_resource::<PersistentVolume>(
                 client.clone(),
