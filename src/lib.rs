@@ -1,5 +1,4 @@
 pub mod crd;
-pub mod finalizer;
 pub mod objectstorage;
 pub mod resource;
 pub mod status;

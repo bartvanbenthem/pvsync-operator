@@ -1,5 +1,6 @@
 use crate::utils;
 
+use k8s_openapi::ClusterResourceScope;
 use k8s_openapi::Metadata;
 use k8s_openapi::NamespaceResourceScope;
 use k8s_openapi::api::core::v1::Namespace;
@@ -15,6 +16,7 @@ use kube::api::ObjectList;
 use kube::core::ObjectMeta;
 use std::fmt::Debug;
 use std::path::Path;
+use std::collections::HashSet;
 use tracing::*;
 
 use futures::TryStreamExt;
@@ -26,6 +28,8 @@ use tokio::sync::mpsc;
 use tokio::task;
 
 use std::sync::Arc;
+
+use serde_json::{Value, json};
 
 /// Ensures a namespace exists using Server-Side Apply.
 ///
@@ -227,6 +231,231 @@ where
     // Perform the deletion
     api.delete(name, &DeleteParams::default()).await?;
 
+    Ok(())
+}
+
+///let _ = add_finalizer_namespaced_resource::<PersistentVolumeClaim>(
+///    client.clone(),
+///    "test-pvc",
+///    "default",
+///    "volumetrackers.cndev.nl/finalizer",
+///)
+///.await?;
+pub async fn add_finalizer_namespaced_resource<T>(
+    client: Client,
+    name: &str,
+    namespace: &str,
+    value: &str,
+) -> Result<T, kube::Error>
+where
+    T: Clone
+        + Debug
+        + Resource<DynamicType = (), Scope = NamespaceResourceScope>
+        + DeserializeOwned,
+{
+    let api: Api<T> = Api::namespaced(client, namespace);
+    let finalizer: Value = json!({
+        "metadata": {
+            "finalizers": [value]
+        }
+    });
+
+    let patch: Patch<&Value> = Patch::Merge(&finalizer);
+    api.patch(name, &PatchParams::default(), &patch).await
+}
+
+///let _ = add_finalizer_cluster_resource::<PersistentVolume>(
+///    client.clone(),
+///    "test-pv",
+///    "volumetrackers.cndev.nl/finalizer",
+///)
+///.await?;
+pub async fn add_finalizer_cluster_resource<T>(
+    client: Client,
+    name: &str,
+    value: &str,
+) -> Result<T, kube::Error>
+where
+    T: Clone
+        + Debug
+        + Resource<DynamicType = (), Scope = kube::core::ClusterResourceScope>
+        + DeserializeOwned,
+{
+    let api: Api<T> = Api::all(client);
+    let finalizer: Value = json!({
+        "metadata": {
+            "finalizers": [value]
+        }
+    });
+
+    let patch: Patch<&Value> = Patch::Merge(&finalizer);
+    api.patch(name, &PatchParams::default(), &patch).await
+}
+
+///let _ = delete_finalizer_namespaced_resource::<PersistentVolumeClaim>(
+///    client.clone(),
+///    "test-pvc",
+///    "default",
+///)
+///.await?;
+#[allow(dead_code)]
+pub async fn delete_finalizer_namespaced_resource<T>(
+    client: Client,
+    name: &str,
+    namespace: &str,
+) -> Result<T, kube::Error>
+where
+    T: Clone
+        + Debug
+        + Resource<DynamicType = (), Scope = NamespaceResourceScope>
+        + DeserializeOwned,
+{
+    let api: Api<T> = Api::namespaced(client, namespace);
+    let finalizer: Value = json!({
+        "metadata": {
+            "finalizers": null
+        }
+    });
+
+    let patch: Patch<&Value> = Patch::Merge(&finalizer);
+    api.patch(name, &PatchParams::default(), &patch).await
+}
+
+///let _ = add_finalizer_cluster_resource::<PersistentVolume>(
+///    client.clone(),
+///    "test-pv",
+///)
+///.await?;
+#[allow(dead_code)]
+pub async fn delete_finalizer_cluster_resource<T>(client: Client, name: &str) -> Result<T, kube::Error>
+where
+    T: Clone
+        + Debug
+        + Resource<DynamicType = (), Scope = kube::core::ClusterResourceScope>
+        + DeserializeOwned,
+{
+    let api: Api<T> = Api::all(client);
+    let finalizer: Value = json!({
+        "metadata": {
+            "finalizers": null
+        }
+    });
+
+    let patch: Patch<&Value> = Patch::Merge(&finalizer);
+    api.patch(name, &PatchParams::default(), &patch).await
+}
+
+/// Garbage collects orphaned cluster-scoped resources.
+///
+/// This function lists all resources of type `T` matching the `label_selector`.
+/// Resources found on the cluster that are not present in `desired_names` are deleted.
+/// If a resource is already missing during deletion, the error is ignored.
+///
+/// # Arguments
+/// * `client` - The Kubernetes [Client] used to interact with the API.
+/// * `label_selector` - A label query (e.g., "app=pvsync") to filter owned resources.
+/// * `desired_names` - The set of resource names that should currently exist.
+///
+/// # Errors
+/// Returns [kube::Error] for API failures, excluding 404 Not Found during deletion.
+#[allow(dead_code)]
+pub async fn gc_cluster_resources<T>(
+    client: Client,
+    label_selector: &str,
+    desired_names: &HashSet<String>,
+) -> Result<(), kube::Error>
+where 
+    T: Clone
+        + Debug
+        + Resource<DynamicType = (), Scope = ClusterResourceScope>
+        + Metadata<Ty = ObjectMeta>
+        + DeserializeOwned
+        + Send
+        + Sync
+        + 'static
+        + Default
+        + Serialize,
+{
+    let api: Api<T> = Api::all(client.clone());
+    let lp = ListParams::default().labels(label_selector);
+    let existing = api.list(&lp).await?; 
+
+    for resource in existing {
+        let name = resource.name_any();
+        if !desired_names.contains(&name) {
+            info!(resource = %name, "Deleting orphaned cluster resource");
+            
+            // Clean up finalizers first; ignore if already gone
+            let _ = delete_finalizer_cluster_resource::<T>(client.clone(), &name).await;
+            
+            match api.delete(&name, &DeleteParams::default()).await {
+                Ok(_) => info!(resource = %name, "Resource deletion initiated"),
+                Err(kube::Error::Api(e)) if e.code == 404 => {
+                    info!(resource = %name, "Resource already deleted, skipping");
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Garbage collects orphaned namespaced resources.
+///
+/// Performs a cross-namespace search for resources of type `T`. If a resource 
+/// matches the `label_selector` but is not in `desired_names`, it is deleted.
+/// 
+/// This function is robust against race conditions where resources are deleted
+/// by external actors between the list and delete calls.
+///
+/// # Arguments
+/// * `client` - The Kubernetes [Client].
+/// * `label_selector` - Filter for resources belonging to this controller.
+/// * `desired_names` - The source-of-truth list of resource names.
+///
+/// # Errors
+/// Returns [kube::Error] if API operations fail (except 404s).
+#[allow(dead_code)]
+pub async fn gc_namespaced_resources<T>(
+    client: Client,
+    label_selector: &str,
+    desired_names: &HashSet<String>,
+) -> Result<(), kube::Error>
+where 
+    T: Clone
+        + Debug
+        + Resource<DynamicType = (), Scope = NamespaceResourceScope>
+        + Metadata<Ty = ObjectMeta>
+        + DeserializeOwned
+        + Send
+        + Sync
+        + 'static
+        + Default
+        + Serialize,
+{
+    let api: Api<T> = Api::all(client.clone());
+    let lp = ListParams::default().labels(label_selector);
+    let existing = api.list(&lp).await?;
+
+    for resource in existing {
+        let name = resource.name_any();
+        if !desired_names.contains(&name) {
+            // Safe access to namespace metadata
+            if let Some(ns) = resource.metadata().namespace.as_ref() {
+                info!(resource = %name, namespace = %ns, "Deleting orphaned namespaced resource");
+                
+                let _ = delete_finalizer_namespaced_resource::<T>(client.clone(), &name, ns).await;
+                
+                match api.delete(&name, &DeleteParams::default()).await {
+                    Ok(_) => info!(resource = %name, "Resource deletion initiated"),
+                    Err(kube::Error::Api(e)) if e.code == 404 => {
+                        info!(resource = %name, "Resource already deleted, skipping");
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+    }
     Ok(())
 }
 
