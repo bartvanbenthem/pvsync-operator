@@ -242,6 +242,7 @@ async fn reconcile_recovery(
         .unwrap();
 
         let bundle = storage::deserialize_storage_bundle(file.clone())?;
+        storage::print_bundle_names(&bundle);
 
         // Generate the OwnerReference once outside the loops
         let owner_ref = cr.controller_owner_ref(&()).expect("CR must have metadata");
@@ -256,6 +257,7 @@ async fn reconcile_recovery(
 
             // Patch Owner Reference (for automatic cleanup)
             sanitized.metadata.owner_references = Some(vec![owner_ref.clone()]);
+
             // Ensure the data is never deleted from the physical share
             if let Some(spec) = sanitized.spec.as_mut() {
                 // Force the policy to Retain to prevent accidental deletion of share data

@@ -229,6 +229,35 @@ pub async fn cleanup_old_objects(cr: &PersistentVolumeSync) -> anyhow::Result<()
     Ok(())
 }
 
+pub fn print_bundle_names(bundle: &StorageObjectBundle) {
+    // 1. Collect and log PV names on one line
+    let pv_names: Vec<String> = bundle.persistent_volumes
+        .iter()
+        .map(|pv| pv.metadata.name.as_deref().unwrap_or("unknown").to_string())
+        .collect();
+    
+    info!(
+        "Total PVs ({}): [{}]", 
+        pv_names.len(), 
+        pv_names.join(", ")
+    );
+
+    // 2. Collect and log PVC names on one line
+    let pvc_names: Vec<String> = bundle.persistent_volume_claims
+        .iter()
+        .map(|pvc| {
+            let ns = pvc.metadata.namespace.as_deref().unwrap_or("unknown");
+            format!("{}/{}", ns, pvc.metadata.name.as_deref().unwrap_or("unknown").to_string()) // Format as namespace/name
+        })
+        .collect();
+
+    info!(
+        "Total PVCs ({}): [{}]", 
+        pvc_names.len(), 
+        pvc_names.join(", ")
+    );
+}
+
 // --- Dummy Data for Testing ---
 pub fn dummy_storage_bundle() -> StorageObjectBundle {
     let mut bundle = StorageObjectBundle::new();
