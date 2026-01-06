@@ -313,12 +313,15 @@ async fn reconcile_recovery(
             .filter_map(|pv| pv.metadata.name.clone())
             .collect();
 
-        // Extract desired PVC names from the bundle
-        let desired_pvcs: HashSet<String> = bundle
+        // Extract desired PVC identities (Namespace + Name) from the bundle
+        let desired_pvcs: HashSet<(String, String)> = bundle
             .persistent_volume_claims
-            .clone()
             .iter()
-            .filter_map(|pvc| pvc.metadata.name.clone())
+            .filter_map(|pvc| {
+                let ns = pvc.metadata.namespace.clone()?;
+                let name = pvc.metadata.name.clone()?;
+                Some((ns, name))
+            })
             .collect();
 
         // Run Garbage Collection for PVCs (Namespaced Scoped)

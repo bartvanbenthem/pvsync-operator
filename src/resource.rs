@@ -437,7 +437,7 @@ where
 /// # Arguments
 /// * `client` - The Kubernetes [Client].
 /// * `label_selector` - Filter for resources belonging to this controller.
-/// * `desired_names` - The source-of-truth list of resource names.
+/// * `desired_names` - The source-of-truth list of resource names (Namespace, Name).
 ///
 /// # Errors
 /// Returns [kube::Error] if API operations fail (except 404s).
@@ -445,19 +445,12 @@ where
 pub async fn gc_namespaced_resources<T>(
     client: Client,
     label_selector: &str,
-    desired_names: &HashSet<String>,
+    desired_resources: &HashSet<(String, String)>, // (Namespace, Name)
 ) -> Result<(), kube::Error>
 where
-    T: Clone
-        + Debug
+    T: Clone + Debug + DeserializeOwned + Serialize + Default + Send + Sync + 'static
         + Resource<DynamicType = (), Scope = NamespaceResourceScope>
-        + Metadata<Ty = ObjectMeta>
-        + DeserializeOwned
-        + Send
-        + Sync
-        + 'static
-        + Default
-        + Serialize,
+        + Metadata<Ty = ObjectMeta>,
 {
     let api: Api<T> = Api::all(client.clone());
     let lp = ListParams::default().labels(label_selector);
@@ -465,42 +458,30 @@ where
 
     for resource in existing {
         let name = resource.name_any();
-        if !desired_names.contains(&name) {
-            if let Some(ns) = resource.metadata().namespace.as_ref() {
-                // Create a namespaced API handle for patching/deleting
-                let ns_api: Api<T> = Api::namespaced(client.clone(), ns);
+        let ns = resource.metadata().namespace.clone().unwrap_or_default();
 
-                // 1. Check if it's already stuck in Terminating
-                if resource.metadata().deletion_timestamp.is_some() {
-                    info!(resource = %name, namespace = %ns, "Orphaned resource is terminating; force-clearing finalizers");
-                    let purge_patch = serde_json::json!({
-                        "metadata": {
-                            "finalizers": null
-                        }
-                    });
+        // Check if this specific instance (Namespace + Name) is in the desired list
+        if !desired_resources.contains(&(ns.clone(), name.clone())) {
+            let ns_api: Api<T> = Api::namespaced(client.clone(), &ns);
+
+            // 1. Handle stuck terminations
+            if resource.metadata().deletion_timestamp.is_some() {
+                info!(resource = %name, namespace = %ns, "Orphaned resource is terminating; force-clearing finalizers");
+                let purge_patch = serde_json::json!({ "metadata": { "finalizers": null } });
+                let _ = ns_api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                continue;
+            }
+
+            // 2. Initiate Deletion
+            info!(resource = %name, namespace = %ns, "Deleting orphaned namespaced resource");
+            match ns_api.delete(&name, &DeleteParams::foreground()).await {
+                Ok(_) => {
+                    // 3. Force wipe finalizers to ensure cleanup
+                    let purge_patch = serde_json::json!({ "metadata": { "finalizers": null } });
                     let _ = ns_api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
-                    continue;
                 }
-
-                // 2. Initiate Deletion
-                info!(resource = %name, namespace = %ns, "Deleting orphaned namespaced resource");
-                let dp = DeleteParams::foreground();
-
-                match ns_api.delete(&name, &dp).await {
-                    Ok(_) => {
-                        // 3. Wipe finalizers immediately after delete call to ensure it finishes
-                        let purge_patch = serde_json::json!({
-                            "metadata": {
-                                "finalizers": null
-                            }
-                        });
-                        let _ = ns_api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
-                    }
-                    Err(kube::Error::Api(e)) if e.code == 404 => {
-                        info!(resource = %name, "Resource already deleted, skipping");
-                    }
-                    Err(e) => return Err(e),
-                }
+                Err(kube::Error::Api(e)) if e.code == 404 => continue,
+                Err(e) => return Err(e),
             }
         }
     }
