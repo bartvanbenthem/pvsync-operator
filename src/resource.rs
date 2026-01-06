@@ -386,8 +386,7 @@ where
     for resource in existing {
         let name = resource.name_any();
         if !desired_names.contains(&name) {
-            
-            // 1. If it has a deletion timestamp, it's already hanging. 
+            // 1. If it has a deletion timestamp, it's already hanging.
             // We must clear finalizers to let it vanish.
             if resource.metadata().deletion_timestamp.is_some() {
                 info!(resource = %name, "Resource is terminating; force-clearing all finalizers");
@@ -396,16 +395,18 @@ where
                         "finalizers": null
                     }
                 });
-                let _ = api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                let _ = api
+                    .patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch))
+                    .await;
                 continue;
             }
 
             // 2. Not terminating yet? Initiate deletion.
             info!(resource = %name, "Deleting orphaned cluster resource");
-            
+
             // We use Foreground propagation to ensure children are handled
-            let dp = DeleteParams::foreground(); 
-            
+            let dp = DeleteParams::foreground();
+
             match api.delete(&name, &dp).await {
                 Ok(_) => {
                     // 3. Immediately follow up with a finalizer wipe to prevent hanging
@@ -414,7 +415,9 @@ where
                             "finalizers": null
                         }
                     });
-                    let _ = api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                    let _ = api
+                        .patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch))
+                        .await;
                 }
                 Err(kube::Error::Api(e)) if e.code == 404 => {
                     info!(resource = %name, "Resource already deleted, skipping");
@@ -448,7 +451,14 @@ pub async fn gc_namespaced_resources<T>(
     desired_resources: &HashSet<(String, String)>, // (Namespace, Name)
 ) -> Result<(), kube::Error>
 where
-    T: Clone + Debug + DeserializeOwned + Serialize + Default + Send + Sync + 'static
+    T: Clone
+        + Debug
+        + DeserializeOwned
+        + Serialize
+        + Default
+        + Send
+        + Sync
+        + 'static
         + Resource<DynamicType = (), Scope = NamespaceResourceScope>
         + Metadata<Ty = ObjectMeta>,
 {
@@ -468,7 +478,9 @@ where
             if resource.metadata().deletion_timestamp.is_some() {
                 info!(resource = %name, namespace = %ns, "Orphaned resource is terminating; force-clearing finalizers");
                 let purge_patch = serde_json::json!({ "metadata": { "finalizers": null } });
-                let _ = ns_api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                let _ = ns_api
+                    .patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch))
+                    .await;
                 continue;
             }
 
@@ -478,7 +490,9 @@ where
                 Ok(_) => {
                     // 3. Force wipe finalizers to ensure cleanup
                     let purge_patch = serde_json::json!({ "metadata": { "finalizers": null } });
-                    let _ = ns_api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                    let _ = ns_api
+                        .patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch))
+                        .await;
                 }
                 Err(kube::Error::Api(e)) if e.code == 404 => continue,
                 Err(e) => return Err(e),
