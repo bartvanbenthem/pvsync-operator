@@ -15,9 +15,9 @@ use futures::stream::StreamExt;
 use k8s_openapi::api::core::v1::PersistentVolume;
 use kube::Config as KubeConfig;
 use kube::ResourceExt;
-use kube::api::ListParams;
+use kube::api::{ListParams, DeleteParams};
 use kube::runtime::watcher::Config;
-use kube::{Api, client::Client, runtime::Controller, runtime::controller::Action};
+use kube::{Api, Resource, client::Client, runtime::Controller, runtime::controller::Action};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::time::Duration;
@@ -44,7 +44,7 @@ impl ContextData {
 }
 
 pub static SYNC_LABEL: &str = "volumesyncs.storage.cndev.nl/sync=enabled";
-pub static RECOVERY_LABEL: &str = "volumesyncs.storage.cndev.nl/mode=recovery";
+pub static RECOVERY_LABEL: &str = "volumesyncs.storage.cndev.nl/recovery";
 pub static FINALIZER_LABEL: &str = "volumesyncs.storage.cndev.nl/finalizer";
 
 #[tokio::main]
@@ -160,88 +160,6 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-async fn reconcile_recovery(
-    cr: Arc<PersistentVolumeSync>,
-    context: Arc<ContextData>,
-) -> Result<Action, Error> {
-    let client = context.client.clone();
-    let name = cr.name_any();
-
-    info!(resource = %name, "Starting cluster-scoped reconciliation");
-
-    // Execute core logic and capture the result in a block
-    // This ensures we can update the status regardless of where it fails.
-    let reconcile_result: Result<(), Error> = async {
-        let store = objectstorage::initialize_object_store(&cr.spec.cloud_provider).await?;
-        let file = objectstorage::get_latest_file_content(store.into(), "mylocalcluster")
-            .await?
-            .unwrap();
-
-        let bundle = storage::deserialize_storage_bundle(file.clone())?;
-
-        for pv in bundle.persistent_volumes {
-            let sanitized = utils::sanitize_pv(&pv);
-            
-            resource::apply_cluster_resource::<PersistentVolume>(
-                client.clone(),
-                &sanitized,
-                RECOVERY_LABEL,
-            )
-            .await?;
-
-            finalizer::add_finalizer_cluster_resource::<PersistentVolume>(
-                client.clone(),
-                &sanitized.metadata.name.clone().unwrap_or_default(),
-                FINALIZER_LABEL,
-            ).await?;
-
-        }
-
-        for pvc in bundle.persistent_volume_claims {
-            let sanitized = utils::sanitize_pvc(&pvc);
-
-            let namespace = &sanitized.metadata.namespace.clone().unwrap_or_default();
-            resource::ensure_namespace(client.clone(), &namespace, RECOVERY_LABEL).await?;
-
-            resource::apply_namespaced_resource::<PersistentVolumeClaim>(
-                client.clone(),
-                &namespace,
-                &sanitized,
-                RECOVERY_LABEL,
-            )
-            .await?;
-
-            finalizer::add_finalizer_namespaced_resource::<PersistentVolumeClaim>(
-                client.clone(),
-                &sanitized.metadata.name.clone().unwrap_or_default(),
-                namespace,
-                FINALIZER_LABEL,
-            ).await?;
-
-        }
-
-        Ok(())
-    }
-    .await;
-
-    // Prepare the status based on the outcome of the logic block
-    // Patch the status subresource of the CustomResource (Cluster-scoped only)
-    // We await this so the status is confirmed before the next cycle starts.
-    update_status(client.clone(), &name, &reconcile_result).await;
-
-    // Return the result
-    match reconcile_result {
-        Ok(_) => {
-            info!(resource = %name, "Reconciliation successful");
-            Ok(Action::requeue(Duration::from_secs(36000))) // Long wait on success
-        }
-        Err(e) => {
-            // Returning an error here triggers the on_error function
-            Err(e)
-        }
-    }
-}
-
 async fn reconcile_protected(
     cr: Arc<PersistentVolumeSync>,
     context: Arc<ContextData>,
@@ -288,6 +206,152 @@ async fn reconcile_protected(
             Err(e)
         }
     }
+}
+
+async fn reconcile_recovery(
+    cr: Arc<PersistentVolumeSync>,
+    context: Arc<ContextData>,
+) -> Result<Action, Error> {
+    let client = context.client.clone();
+    let name = cr.name_any();
+
+    // Check if the resource is being deleted
+    if cr.metadata.deletion_timestamp.is_some() {
+        return cleanup_owned_resources(cr, client).await;
+    }
+
+    // Otherwise, ensure the finalizer exists and proceed with normal logic
+    finalizer::add_finalizer_cluster_resource::<PersistentVolumeSync>(client.clone(), &name, FINALIZER_LABEL).await?;
+
+    info!(resource = %name, "Starting cluster-scoped reconciliation");
+
+    // Execute core logic and capture the result in a block
+    // This ensures we can update the status regardless of where it fails.
+    let reconcile_result: Result<(), Error> = async {
+        let store = objectstorage::initialize_object_store(&cr.spec.cloud_provider).await?;
+        let file = objectstorage::get_latest_file_content(store.into(), "mylocalcluster")
+            .await?
+            .unwrap();
+
+        let bundle = storage::deserialize_storage_bundle(file.clone())?;
+
+        // 1. Generate the OwnerReference once outside the loops
+        let owner_ref = cr.controller_owner_ref(&()).expect("CR must have metadata");
+
+        for pv in bundle.persistent_volumes {
+            let mut sanitized = utils::sanitize_pv(&pv);
+            
+            // Patch Labels
+            let labels = sanitized.metadata.labels.get_or_insert(Default::default());
+            labels.insert(RECOVERY_LABEL.to_string(), name.clone());
+
+            // Patch Owner Reference (for automatic cleanup)
+            sanitized.metadata.owner_references = Some(vec![owner_ref.clone()]);
+
+            resource::apply_cluster_resource::<PersistentVolume>(
+                client.clone(),
+                &sanitized,
+                RECOVERY_LABEL,
+            )
+            .await?;
+
+            finalizer::add_finalizer_cluster_resource::<PersistentVolume>(
+                client.clone(),
+                &sanitized.metadata.name.clone().unwrap_or_default(),
+                FINALIZER_LABEL,
+            ).await?;
+        }
+
+        for pvc in bundle.persistent_volume_claims {
+            let mut sanitized = utils::sanitize_pvc(&pvc);
+            let namespace = sanitized.metadata.namespace.clone().unwrap_or_default();
+
+            // Patch Labels
+            let labels = sanitized.metadata.labels.get_or_insert(Default::default());
+            labels.insert(RECOVERY_LABEL.to_string(), name.clone());
+
+            // Patch Owner Reference
+            sanitized.metadata.owner_references = Some(vec![owner_ref.clone()]);
+
+            resource::ensure_namespace(client.clone(), &namespace, RECOVERY_LABEL).await?;
+
+            resource::apply_namespaced_resource::<PersistentVolumeClaim>(
+                client.clone(),
+                &namespace,
+                &sanitized,
+                RECOVERY_LABEL,
+            )
+            .await?;
+
+            finalizer::add_finalizer_namespaced_resource::<PersistentVolumeClaim>(
+                client.clone(),
+                &sanitized.metadata.name.clone().unwrap_or_default(),
+                &namespace,
+                FINALIZER_LABEL,
+            ).await?;
+        }
+
+        Ok(())
+    }
+    .await;
+
+    // Prepare the status based on the outcome of the logic block
+    // Patch the status subresource of the CustomResource (Cluster-scoped only)
+    // We await this so the status is confirmed before the next cycle starts.
+    update_status(client.clone(), &name, &reconcile_result).await;
+
+    // Return the result
+    match reconcile_result {
+        Ok(_) => {
+            info!(resource = %name, "Reconciliation successful");
+            Ok(Action::requeue(Duration::from_secs(36000))) // Long wait on success
+        }
+        Err(e) => {
+            // Returning an error here triggers the on_error function
+            Err(e)
+        }
+    }
+}
+
+async fn cleanup_owned_resources(
+    cr: Arc<PersistentVolumeSync>,
+    client: Client,
+) -> Result<Action, Error> {
+    let name = cr.name_any();
+    info!("Cleaning up resources for {}", name);
+
+    let lp = ListParams::default().labels(&format!("{}={}", RECOVERY_LABEL, name));
+
+    // Find and clear finalizers for PVs owned by this CR
+    let pv_api: Api<PersistentVolume> = Api::all(client.clone());
+    let pvs = pv_api.list(&lp).await?;
+
+    for pv in pvs {
+        if let Some(pv_name) = pv.metadata.name {
+            finalizer::delete_finalizer_cluster_resource::<PersistentVolume>(
+                client.clone(), 
+                &pv_name
+            ).await?;
+        }
+    }
+
+    // Do the same for PVCs (Namespaced)
+    let pvc_api: Api<PersistentVolumeClaim> = Api::all(client.clone());
+    let pvcs = pvc_api.list(&lp).await?;
+    for pvc in pvcs {
+        if let (Some(pvc_name), Some(ns)) = (pvc.metadata.name, pvc.metadata.namespace) {
+            finalizer::delete_finalizer_namespaced_resource::<PersistentVolumeClaim>(
+                client.clone(),
+                &pvc_name,
+                &ns,
+            ).await?;
+        }
+    }
+
+    // Finally, remove the finalizer from the CR itself
+    finalizer::delete_finalizer_cluster_resource::<PersistentVolumeSync>(client.clone(), &name).await?;
+
+    Ok(Action::await_change())
 }
 
 async fn update_status(client: Client, name: &str, reconcile_result: &Result<(), Error>) {
