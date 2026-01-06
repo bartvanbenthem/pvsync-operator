@@ -14,7 +14,7 @@ use futures::stream::StreamExt;
 use k8s_openapi::api::core::v1::PersistentVolume;
 use kube::Config as KubeConfig;
 use kube::ResourceExt;
-use kube::api::{ListParams, DeleteParams};
+use kube::api::ListParams;
 use kube::runtime::watcher::Config;
 use kube::{Api, Resource, client::Client, runtime::Controller, runtime::controller::Action};
 use std::sync::Arc;
@@ -240,7 +240,7 @@ async fn reconcile_recovery(
 
         let bundle = storage::deserialize_storage_bundle(file.clone())?;
 
-        // 1. Generate the OwnerReference once outside the loops
+        // Generate the OwnerReference once outside the loops
         let owner_ref = cr.controller_owner_ref(&()).expect("CR must have metadata");
 
         // --- Apply or Update Resources from Bundle ---
