@@ -14,9 +14,9 @@ use serde::de::DeserializeOwned;
 use anyhow::{Result, anyhow};
 use kube::api::ObjectList;
 use kube::core::ObjectMeta;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::path::Path;
-use std::collections::HashSet;
 use tracing::*;
 
 use futures::TryStreamExt;
@@ -327,7 +327,10 @@ where
 ///)
 ///.await?;
 #[allow(dead_code)]
-pub async fn delete_finalizer_cluster_resource<T>(client: Client, name: &str) -> Result<T, kube::Error>
+pub async fn delete_finalizer_cluster_resource<T>(
+    client: Client,
+    name: &str,
+) -> Result<T, kube::Error>
 where
     T: Clone
         + Debug
@@ -364,7 +367,7 @@ pub async fn gc_cluster_resources<T>(
     label_selector: &str,
     desired_names: &HashSet<String>,
 ) -> Result<(), kube::Error>
-where 
+where
     T: Clone
         + Debug
         + Resource<DynamicType = (), Scope = ClusterResourceScope>
@@ -378,18 +381,41 @@ where
 {
     let api: Api<T> = Api::all(client.clone());
     let lp = ListParams::default().labels(label_selector);
-    let existing = api.list(&lp).await?; 
+    let existing = api.list(&lp).await?;
 
     for resource in existing {
         let name = resource.name_any();
         if !desired_names.contains(&name) {
+            
+            // 1. If it has a deletion timestamp, it's already hanging. 
+            // We must clear finalizers to let it vanish.
+            if resource.metadata().deletion_timestamp.is_some() {
+                info!(resource = %name, "Resource is terminating; force-clearing all finalizers");
+                let purge_patch = serde_json::json!({
+                    "metadata": {
+                        "finalizers": null
+                    }
+                });
+                let _ = api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                continue;
+            }
+
+            // 2. Not terminating yet? Initiate deletion.
             info!(resource = %name, "Deleting orphaned cluster resource");
             
-            // Clean up finalizers first; ignore if already gone
-            let _ = delete_finalizer_cluster_resource::<T>(client.clone(), &name).await;
+            // We use Foreground propagation to ensure children are handled
+            let dp = DeleteParams::foreground(); 
             
-            match api.delete(&name, &DeleteParams::default()).await {
-                Ok(_) => info!(resource = %name, "Resource deletion initiated"),
+            match api.delete(&name, &dp).await {
+                Ok(_) => {
+                    // 3. Immediately follow up with a finalizer wipe to prevent hanging
+                    let purge_patch = serde_json::json!({
+                        "metadata": {
+                            "finalizers": null
+                        }
+                    });
+                    let _ = api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                }
                 Err(kube::Error::Api(e)) if e.code == 404 => {
                     info!(resource = %name, "Resource already deleted, skipping");
                 }
@@ -402,9 +428,9 @@ where
 
 /// Garbage collects orphaned namespaced resources.
 ///
-/// Performs a cross-namespace search for resources of type `T`. If a resource 
+/// Performs a cross-namespace search for resources of type `T`. If a resource
 /// matches the `label_selector` but is not in `desired_names`, it is deleted.
-/// 
+///
 /// This function is robust against race conditions where resources are deleted
 /// by external actors between the list and delete calls.
 ///
@@ -421,7 +447,7 @@ pub async fn gc_namespaced_resources<T>(
     label_selector: &str,
     desired_names: &HashSet<String>,
 ) -> Result<(), kube::Error>
-where 
+where
     T: Clone
         + Debug
         + Resource<DynamicType = (), Scope = NamespaceResourceScope>
@@ -440,14 +466,36 @@ where
     for resource in existing {
         let name = resource.name_any();
         if !desired_names.contains(&name) {
-            // Safe access to namespace metadata
             if let Some(ns) = resource.metadata().namespace.as_ref() {
+                // Create a namespaced API handle for patching/deleting
+                let ns_api: Api<T> = Api::namespaced(client.clone(), ns);
+
+                // 1. Check if it's already stuck in Terminating
+                if resource.metadata().deletion_timestamp.is_some() {
+                    info!(resource = %name, namespace = %ns, "Orphaned resource is terminating; force-clearing finalizers");
+                    let purge_patch = serde_json::json!({
+                        "metadata": {
+                            "finalizers": null
+                        }
+                    });
+                    let _ = ns_api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                    continue;
+                }
+
+                // 2. Initiate Deletion
                 info!(resource = %name, namespace = %ns, "Deleting orphaned namespaced resource");
-                
-                let _ = delete_finalizer_namespaced_resource::<T>(client.clone(), &name, ns).await;
-                
-                match api.delete(&name, &DeleteParams::default()).await {
-                    Ok(_) => info!(resource = %name, "Resource deletion initiated"),
+                let dp = DeleteParams::foreground();
+
+                match ns_api.delete(&name, &dp).await {
+                    Ok(_) => {
+                        // 3. Wipe finalizers immediately after delete call to ensure it finishes
+                        let purge_patch = serde_json::json!({
+                            "metadata": {
+                                "finalizers": null
+                            }
+                        });
+                        let _ = ns_api.patch(&name, &PatchParams::default(), &Patch::Merge(&purge_patch)).await;
+                    }
                     Err(kube::Error::Api(e)) if e.code == 404 => {
                         info!(resource = %name, "Resource already deleted, skipping");
                     }

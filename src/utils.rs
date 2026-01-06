@@ -7,8 +7,8 @@ use std::path::Path;
 use tracing::*;
 
 use k8s_openapi::api::core::v1::{PersistentVolume, PersistentVolumeClaim};
-use kube::Error;
 use kube::core::ObjectMeta;
+use kube::Error;
 
 /// Generic metadata cleaner for any Kubernetes resource
 fn clean_metadata(mut meta: ObjectMeta, keep_namespace: bool) -> ObjectMeta {

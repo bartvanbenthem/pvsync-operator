@@ -110,6 +110,15 @@ kubectl describe persistentvolumesyncs.storage.cndev.nl example-recovery-cluster
 kubectl apply -f ./config/samples/test-pv-nolabel.yaml
 kubectl apply -f ./config/samples/test-pv.yaml
 # kubectl delete -f ./config/samples/test-pv.yaml
+
+# scripted test
+while true; do 
+  kubectl apply -f ./config/samples/test-pv.yaml; 
+  sleep 5; 
+  kubectl delete -f ./config/samples/test-pv.yaml; 
+  sleep 5; 
+done
+
 ```
 
 ## CR Spec

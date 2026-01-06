@@ -17,8 +17,8 @@ use kube::ResourceExt;
 use kube::api::ListParams;
 use kube::runtime::watcher::Config;
 use kube::{Api, Resource, client::Client, runtime::Controller, runtime::controller::Action};
-use std::sync::Arc;
 use std::collections::HashSet;
+use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::time::Duration;
 use tracing::*;
@@ -306,30 +306,36 @@ async fn reconcile_recovery(
 
         // --- Garbage Collection Step for PVs ---
         // Extract desired PV names from the bundle
-        let desired_pvs: HashSet<String> = bundle.persistent_volumes.clone()
+        let desired_pvs: HashSet<String> = bundle
+            .persistent_volumes
+            .clone()
             .iter()
             .filter_map(|pv| pv.metadata.name.clone())
             .collect();
 
         // Extract desired PVC names from the bundle
-        let desired_pvcs: HashSet<String> = bundle.persistent_volume_claims.clone()
+        let desired_pvcs: HashSet<String> = bundle
+            .persistent_volume_claims
+            .clone()
             .iter()
             .filter_map(|pvc| pvc.metadata.name.clone())
             .collect();
-
-        // Run Garbage Collection for PVs (Cluster Scoped)
-        resource::gc_cluster_resources::<PersistentVolume>(
-            client.clone(),
-            RECOVERY_LABEL,
-            &desired_pvs,
-        ).await?;
 
         // Run Garbage Collection for PVCs (Namespaced Scoped)
         resource::gc_namespaced_resources::<PersistentVolumeClaim>(
             client.clone(),
             RECOVERY_LABEL,
             &desired_pvcs,
-        ).await?;
+        )
+        .await?;
+
+        // Run Garbage Collection for PVs (Cluster Scoped)
+        resource::gc_cluster_resources::<PersistentVolume>(
+            client.clone(),
+            RECOVERY_LABEL,
+            &desired_pvs,
+        )
+        .await?;
 
         Ok(())
     }
