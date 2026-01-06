@@ -1,5 +1,5 @@
 # Stage 1: Build the Rust binary with musl
-FROM rust:1.86 AS builder
+FROM rust:1.91.1 AS builder
 # Install musl-dev for musl-gcc
 RUN apt-get update && apt-get install -y musl-dev musl-tools nfs-common
 RUN rustup target add x86_64-unknown-linux-musl
