@@ -1,5 +1,5 @@
-mod resource;
 mod finalizer;
+mod resource;
 
 use k8s_openapi::api::core::v1::PersistentVolumeClaim;
 use pvsync::crd::PersistentVolumeSync;
@@ -15,7 +15,7 @@ use futures::stream::StreamExt;
 use k8s_openapi::api::core::v1::PersistentVolume;
 use kube::Config as KubeConfig;
 use kube::ResourceExt;
-use kube::api::{ListParams, DeleteParams};
+use kube::api::ListParams;
 use kube::runtime::watcher::Config;
 use kube::{Api, Resource, client::Client, runtime::Controller, runtime::controller::Action};
 use std::sync::Arc;
@@ -221,7 +221,12 @@ async fn reconcile_recovery(
     }
 
     // Otherwise, ensure the finalizer exists and proceed with normal logic
-    finalizer::add_finalizer_cluster_resource::<PersistentVolumeSync>(client.clone(), &name, FINALIZER_LABEL).await?;
+    finalizer::add_finalizer_cluster_resource::<PersistentVolumeSync>(
+        client.clone(),
+        &name,
+        FINALIZER_LABEL,
+    )
+    .await?;
 
     info!(resource = %name, "Starting cluster-scoped reconciliation");
 
@@ -240,7 +245,7 @@ async fn reconcile_recovery(
 
         for pv in bundle.persistent_volumes {
             let mut sanitized = utils::sanitize_pv(&pv);
-            
+
             // Patch Labels
             let labels = sanitized.metadata.labels.get_or_insert(Default::default());
             labels.insert(RECOVERY_LABEL.to_string(), name.clone());
@@ -259,7 +264,8 @@ async fn reconcile_recovery(
                 client.clone(),
                 &sanitized.metadata.name.clone().unwrap_or_default(),
                 FINALIZER_LABEL,
-            ).await?;
+            )
+            .await?;
         }
 
         for pvc in bundle.persistent_volume_claims {
@@ -288,7 +294,8 @@ async fn reconcile_recovery(
                 &sanitized.metadata.name.clone().unwrap_or_default(),
                 &namespace,
                 FINALIZER_LABEL,
-            ).await?;
+            )
+            .await?;
         }
 
         Ok(())
@@ -328,10 +335,12 @@ async fn cleanup_owned_resources(
 
     for pv in pvs {
         if let Some(pv_name) = pv.metadata.name {
+            info!("Cleaning up PersistentVolume {}", pv_name);
             finalizer::delete_finalizer_cluster_resource::<PersistentVolume>(
-                client.clone(), 
-                &pv_name
-            ).await?;
+                client.clone(),
+                &pv_name,
+            )
+            .await?;
         }
     }
 
@@ -340,16 +349,22 @@ async fn cleanup_owned_resources(
     let pvcs = pvc_api.list(&lp).await?;
     for pvc in pvcs {
         if let (Some(pvc_name), Some(ns)) = (pvc.metadata.name, pvc.metadata.namespace) {
+            info!(
+                "Cleaning up PersistentVolumeClaim {} in Namespace {}",
+                pvc_name, ns
+            );
             finalizer::delete_finalizer_namespaced_resource::<PersistentVolumeClaim>(
                 client.clone(),
                 &pvc_name,
                 &ns,
-            ).await?;
+            )
+            .await?;
         }
     }
 
     // Finally, remove the finalizer from the CR itself
-    finalizer::delete_finalizer_cluster_resource::<PersistentVolumeSync>(client.clone(), &name).await?;
+    finalizer::delete_finalizer_cluster_resource::<PersistentVolumeSync>(client.clone(), &name)
+        .await?;
 
     Ok(Action::await_change())
 }
