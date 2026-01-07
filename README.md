@@ -42,11 +42,13 @@ Key Benefit: This approach provides a "Clean Slate" recovery where storage logic
 
 ## upcoming release
 Features in currently in development for the upcoming release:
+* Validating admission webhook for a max of one pvsync custom resource per cluster
+* Helm chart for kubernetes native deployment
 * update cr status with more information: 
   - pub error_message: Option<String>,
   - pub last_run: Option<chrono::DateTime<chrono::Utc>>,
   - pub managed_volumes: Vec<String>,
-* instead of an external watcher on Polling/Listing Comparison, investigate an alternative based on ETAG
+* instead of an external watcher (s3) on Polling/Listing Comparison, investigate an alternative based on ETAG
 
 ## Build container
 ```bash
