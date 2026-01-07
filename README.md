@@ -122,9 +122,9 @@ kubectl apply -f ./config/samples/test-pv.yaml
 # scripted test
 while true; do 
   kubectl apply -f ./config/samples/test-pv.yaml; 
-  sleep 5; 
+  sleep 10; 
   kubectl delete -f ./config/samples/test-pv.yaml; 
-  sleep 5; 
+  sleep 10; 
 done
 
 ```
