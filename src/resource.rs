@@ -168,7 +168,6 @@ where
         + DeserializeOwned
         + Serialize
         + Default
-        // Retaining from your original code, though technically only needed for T::default()
         + Send
         + Sync
         + 'static,
