@@ -79,8 +79,7 @@ kubectl apply -f ./config/crd/pvsync.storage.cndev.nl.yaml
 ```bash
 # secret containing object storage
 source ../00-ENV/env.sh
-kubectl create ns pvsync-operator
-kubectl -n pvsync-operator create secret generic pvsync \
+kubectl -n kube-system create secret generic pvsync \
   --from-literal=OBJECT_STORAGE_ACCOUNT=$OBJECT_STORAGE_ACCOUNT \
   --from-literal=OBJECT_STORAGE_SECRET=$OBJECT_STORAGE_SECRET \
   --from-literal=OBJECT_STORAGE_BUCKET=$OBJECT_STORAGE_BUCKET \
@@ -89,8 +88,9 @@ kubectl -n pvsync-operator create secret generic pvsync \
 
 ## Deploy Operator
 ```bash
-helm install pvsync ./config/operator/chart --create-namespace --namespace pvsync-operator
-# helm -n pvsync-operator uninstall pvsync
+helm install pvsync ./config/operator/chart --create-namespace --namespace kube-system
+kubectl -n kube-system get pods
+# helm -n kube-system uninstall pvsync
 ```
 
 ## Sample volume sync resource on protected cluster

@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
-  repository: ghcr.io/bartvanbenthem/pvsync:v0.6.1
+  repository: ghcr.io/bartvanbenthem/pvsync
   pullPolicy: IfNotPresent
-  tag: "latest"
+  tag: "v0.6.1"
 externalSecret:
   name: "pvsync"
 serviceAccount:
