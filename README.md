@@ -43,12 +43,16 @@ Key Benefit: This approach provides a "Clean Slate" recovery where storage logic
 ## upcoming release
 Features in currently in development for the upcoming release:
 * Validating admission webhook for a max of one pvsync custom resource per cluster
-* Helm chart for kubernetes native deployment
+* Advanced Helm chart for prodcution deployments
 * update cr status with more information: 
   - pub error_message: Option<String>,
   - pub last_run: Option<chrono::DateTime<chrono::Utc>>,
   - pub managed_volumes: Vec<String>,
+* Optimize current logging implementation (via tracing + tracing-subscriber + EnvFilter)
+* Implement traces (via tracing + tracing-subscriber + opentelemetry)
+* Implement metrics (via tikv/prometheus exposed via axum)
 * instead of an external watcher (s3) on Polling/Listing Comparison, investigate an alternative based on ETAG
+* Watcher optimizations (namespaces exclusions, pruning fields, Debouncing Repetitions)
 
 ## Build container
 ```bash
