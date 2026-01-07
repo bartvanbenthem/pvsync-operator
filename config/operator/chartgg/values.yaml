@@ -1,0 +1,18 @@
+replicaCount: 1
+image:
+  repository: ghcr.io/bartvanbenthem/pvsync:v0.6.1
+  pullPolicy: IfNotPresent
+  tag: "latest"
+externalSecret:
+  name: "pvsync"
+serviceAccount:
+  create: true
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+config:
+  logLevel: info

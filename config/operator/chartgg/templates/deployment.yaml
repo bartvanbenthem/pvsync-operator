@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pvsync-operator.fullname" . }}
+  labels: {{ include "pvsync-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{ include "pvsync-operator.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "pvsync-operator.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "pvsync-operator.fullname" . }}
+      containers:
+        - name: operator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          envFrom:
+            - secretRef:
+                name: {{ .Values.externalSecret.name }}
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.config.logLevel }}
+          resources: {{ toYaml .Values.resources | nindent 12 }}
